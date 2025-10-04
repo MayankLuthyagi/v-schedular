@@ -17,7 +17,7 @@ export default function InitialPage() {
                 {/* Main Image */}
                 <div className="mb-6">
                     <Image
-                        src="http://plus.unsplash.com/premium_photo-1681487814165-018814e29155?fm=jpg&q=60&w=3000&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MXx8bG9naW58ZW58MHx8MHx8fDA%3D"
+                        src="https://plus.unsplash.com/premium_photo-1681487814165-018814e29155?fm=jpg&q=60&w=3000&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MXx8bG9naW58ZW58MHx8MHx8fDA%3D"
                         alt="Welcome"
                         width={400}
                         height={300}
@@ -33,7 +33,7 @@ export default function InitialPage() {
 
                 {/* Action Button */}
                 <div className="space-y-3">
-                    <button 
+                    <button
                         onClick={handleGoToLogin}
                         className="w-full bg-blue-600 hover:bg-blue-700 cursor-pointer text-white font-medium py-3 px-4 rounded-lg transition duration-200"
                     >

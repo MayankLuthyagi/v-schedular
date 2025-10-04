@@ -38,7 +38,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, editCampaign }
         attachmentNote: '',
         isActive: true,
     });
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000/api';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://schedular-plum.vercel.app/api';
     const [authEmails, setAuthEmails] = useState<string[]>([]);
     const [loading, setLoading] = useState(false);
 

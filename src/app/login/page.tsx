@@ -11,7 +11,7 @@ export default function LoginPage() {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000/api';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://schedular-plum.vercel.app/api';
 
     // Clear any existing auth state on component mount
     useEffect(() => {
@@ -104,7 +104,7 @@ export default function LoginPage() {
                 {/* Main Image */}
                 <div className="mb-6">
                     <Image
-                        src="http://plus.unsplash.com/premium_photo-1681487814165-018814e29155?fm=jpg&q=60&w=3000&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MXx8bG9naW58ZW58MHx8MHx8fDA%3D"
+                        src="https://plus.unsplash.com/premium_photo-1681487814165-018814e29155?fm=jpg&q=60&w=3000&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MXx8bG9naW58ZW58MHx8MHx8fDA%3D"
                         alt="Login"
                         width={400}
                         height={300}
@@ -145,7 +145,7 @@ export default function LoginPage() {
                             <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                         ) : (
                             <Image
-                                src="http://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg"
+                                src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg"
                                 alt="Google logo"
                                 width={20}
                                 height={20}
