@@ -1,0 +1,386 @@
+// scripts/sendMail.ts
+import { google } from "googleapis";
+import { connectToDatabase } from "@/lib/db";
+import nodemailer from "nodemailer";
+import { ObjectId } from "mongodb";
+import { validateEmail } from "@/lib/emailValidation";
+import "dotenv/config";
+
+// Enhanced error categorization
+interface EmailError {
+    category: 'validation' | 'authentication' | 'rate_limit' | 'network' | 'recipient' | 'attachment' | 'configuration' | 'unknown';
+    reason: string;
+    originalError?: string;
+}
+
+// Function to categorize email sending errors
+function categorizeEmailError(error: any): EmailError {
+    const errorMessage = error.message || error.toString();
+    const errorCode = error.code;
+    const responseCode = error.responseCode;
+
+    // Authentication errors
+    if (errorMessage.includes('Invalid login') ||
+        errorMessage.includes('authentication failed') ||
+        errorMessage.includes('Username and Password not accepted') ||
+        errorCode === 'EAUTH' ||
+        responseCode === 535) {
+        return {
+            category: 'authentication',
+            reason: 'SMTP authentication failed - invalid credentials',
+            originalError: errorMessage
+        };
+    }
+
+    // Rate limiting errors
+    if (errorMessage.includes('rate limit') ||
+        errorMessage.includes('too many emails') ||
+        errorMessage.includes('quota exceeded') ||
+        responseCode === 421 ||
+        responseCode === 450) {
+        return {
+            category: 'rate_limit',
+            reason: 'Rate limit exceeded - too many emails sent',
+            originalError: errorMessage
+        };
+    }
+
+    // Network/connection errors
+    if (errorMessage.includes('ECONNREFUSED') ||
+        errorMessage.includes('ENOTFOUND') ||
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('ECONNRESET') ||
+        errorCode === 'ECONNECTION') {
+        return {
+            category: 'network',
+            reason: 'Network connection failed - unable to reach SMTP server',
+            originalError: errorMessage
+        };
+    }
+
+    // Recipient-related errors
+    if (errorMessage.includes('Mailbox unavailable') ||
+        errorMessage.includes('User unknown') ||
+        errorMessage.includes('No such user') ||
+        errorMessage.includes('Invalid recipient') ||
+        responseCode === 550 ||
+        responseCode === 551) {
+        return {
+            category: 'recipient',
+            reason: 'Recipient mailbox unavailable or invalid',
+            originalError: errorMessage
+        };
+    }
+
+    // Attachment errors
+    if (errorMessage.includes('attachment') ||
+        errorMessage.includes('file size') ||
+        errorMessage.includes('MIME')) {
+        return {
+            category: 'attachment',
+            reason: 'Attachment processing failed',
+            originalError: errorMessage
+        };
+    }
+
+    // Configuration errors
+    if (errorMessage.includes('SMTP') ||
+        errorMessage.includes('configuration') ||
+        errorMessage.includes('settings')) {
+        return {
+            category: 'configuration',
+            reason: 'SMTP configuration error',
+            originalError: errorMessage
+        };
+    }
+
+    // Default to unknown
+    return {
+        category: 'unknown',
+        reason: 'Unknown email sending error',
+        originalError: errorMessage
+    };
+}
+
+(async () => {
+    console.log("🚀 Starting scheduled email job...");
+
+    try {
+        const { db } = await connectToDatabase();
+        console.log("✔️ Database connected.");
+
+        const campaigns = await db
+            .collection("Campaigns")
+            .find({ isActive: true })
+            .toArray();
+        console.log(`🔎 Found ${campaigns.length} active campaigns.`);
+
+        if (campaigns.length === 0) {
+            console.log("No active campaigns to process. Exiting.");
+            process.exit(0);
+        }
+
+        const allSenderEmails = await db.collection("AuthEmails").find({}).toArray();
+
+        // --- Google Sheets setup ---
+        const oauth2Client = new google.auth.OAuth2(
+            process.env.CLIENT_ID,
+            process.env.CLIENT_SECRET,
+            process.env.REDIRECT_URI
+        );
+        oauth2Client.setCredentials({ refresh_token: process.env.REFRESH_TOKEN });
+        const sheets = google.sheets({ version: "v4", auth: oauth2Client });
+
+        for (const campaign of campaigns) {
+            console.log(`\nProcessing campaign: "${campaign.campaignName}" (ID: ${campaign.campaignId})`);
+            const today = new Date();
+            const dayOfWeek = today.toLocaleString("en-US", { weekday: "long" });
+
+            // --- Campaign schedule validation ---
+            const startDate = new Date(campaign.startDate);
+            const endDate = new Date(campaign.endDate);
+            const isCorrectDay = campaign.sendDays.includes(dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1));
+            const isWithinDateRange = startDate <= today && endDate >= today;
+            const isAlreadySentToday = campaign.todaySent === today.toDateString();
+
+            if (!isCorrectDay || !isWithinDateRange || isAlreadySentToday) {
+                console.log("  - 🟡 Skipping: Campaign schedule does not match.");
+                if (!isCorrectDay) console.log(`    - Reason: Today is ${dayOfWeek}, not in send days [${campaign.sendDays.join(', ')}].`);
+                if (!isWithinDateRange) console.log("    - Reason: Today is outside the start/end date range.");
+                if (isAlreadySentToday) console.log("    - Reason: Campaign has already been marked as sent today.");
+                continue;
+            }
+
+            if (campaign.sendTime) {
+                const [hours, minutes] = campaign.sendTime.split(":").map(Number);
+                const now = new Date();
+                if (now.getHours() < hours || (now.getHours() === hours && now.getMinutes() < minutes)) {
+                    console.log(`  - 🟡 Skipping: Current time is before the scheduled send time of ${campaign.sendTime}.`);
+                    continue;
+                }
+            }
+            console.log("  - ✔️ Schedule and time validation passed.");
+
+            // --- Fetch recipients from Google Sheet ---
+            let rows;
+            try {
+                const sheetName = dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1);
+                console.log(`  - fetching data from Google Sheet "${sheetName}"...`);
+                const response = await sheets.spreadsheets.values.get({
+                    spreadsheetId: campaign.sheetId,
+                    range: sheetName,
+                });
+                rows = response.data.values;
+            } catch (error) {
+
+                continue;
+            }
+
+            if (!rows || rows.length < 2) {
+                console.log("  - 🟡 Skipping: No recipient data found in the Google Sheet for today.");
+                continue;
+            }
+            console.log(`  - ✔️ Found ${rows.length - 1} potential recipients in the sheet.`);
+
+            let globalRecipientIndex = 1;
+
+            for (const senderEmailAddress of campaign.commaId) {
+                const authEmail = allSenderEmails.find((e) => e.email === senderEmailAddress.trim());
+                if (!authEmail) {
+                    console.log(`  - 🟡 Skipping sender ${senderEmailAddress}: Not found in AuthEmails.`);
+                    continue;
+                }
+                console.log(`  - ✉️ Preparing to send from: ${authEmail.email}`);
+
+                const transporter = nodemailer.createTransport({
+                    host: "smtp.gmail.com",
+                    port: 587,
+                    secure: false,
+                    auth: {
+                        user: authEmail.email ?? authEmail.main,
+                        pass: authEmail.app_password,
+                    },
+                });
+
+                // --- Send logic ---
+                if (campaign.sendMethod === "bcc" || campaign.sendMethod === "cc") {
+                    const recipientEmailsForBatch: string[] = [];
+                    const invalidEmails: { email: string; reason: string }[] = [];
+                    let i = 0;
+                    while (
+                        globalRecipientIndex < rows.length &&
+                        i < campaign.dailySendLimitPerSender
+                    ) {
+                        const recipientEmail = rows[globalRecipientIndex]?.[0];
+                        globalRecipientIndex++;
+                        if (!recipientEmail?.trim()) continue;
+
+                        // Validate email before adding to batch
+                        const validation = await validateEmail(recipientEmail.trim());
+                        if (validation.isValid) {
+                            recipientEmailsForBatch.push(recipientEmail.trim());
+                            i++;
+                        } else {
+                            console.log(`  - 🚫 Skipping invalid email ${recipientEmail}: ${validation.reason}`);
+                            invalidEmails.push({ email: recipientEmail.trim(), reason: validation.reason || 'Invalid email' });
+                        }
+                    }
+
+                    // Log invalid emails
+                    if (invalidEmails.length > 0) {
+                        const invalidLogs = invalidEmails.map((invalid) => ({
+                            campaignId: campaign.campaignId,
+                            recipientEmail: invalid.email,
+                            senderEmail: authEmail.email,
+                            status: "failed",
+                            failureReason: `Validation failed: ${invalid.reason}`,
+                            failureCategory: 'validation',
+                            originalError: invalid.reason,
+                            sentAt: new Date(),
+                        }));
+                        await db.collection("EmailLog").insertMany(invalidLogs);
+                    }
+
+                    if (recipientEmailsForBatch.length === 0) continue;
+
+                    const mailOptions: any = {
+                        from: authEmail.name
+                            ? `${authEmail.name} <${authEmail.email}>`
+                            : authEmail.email,
+                        to: campaign.toEmail,
+                        cc: campaign.sendMethod === "cc" ? recipientEmailsForBatch : undefined,
+                        bcc:
+                            campaign.sendMethod === "bcc" ? recipientEmailsForBatch : undefined,
+                        subject: campaign.emailSubject,
+                        html: campaign.emailBody,
+                    };
+
+                    if (campaign.attachments?.length > 0) {
+                        mailOptions.attachments = campaign.attachments.map(
+                            (attachment: any) => ({
+                                filename: attachment.filename,
+                                content: Buffer.from(attachment.content, "base64"),
+                                contentType: attachment.contentType,
+                            })
+                        );
+                    }
+
+                    try {
+                        await transporter.sendMail(mailOptions);
+                        console.log(
+                            `✅ Sent batch from ${authEmail.email} to ${recipientEmailsForBatch.length} recipients.`
+                        );
+
+                        const successLogs = recipientEmailsForBatch.map((email) => ({
+                            campaignId: campaign.campaignId,
+                            recipientEmail: email,
+                            senderEmail: authEmail.email,
+                            status: "sent",
+                            sentAt: new Date(),
+                        }));
+                        await db.collection("EmailLog").insertMany(successLogs);
+                    } catch (emailError: any) {
+                        console.error(
+                            `❌ Failed batch from ${authEmail.email}:`,
+                            emailError.message
+                        );
+                    }
+                } else {
+                    let sentFromThisSender = 0;
+                    while (
+                        globalRecipientIndex < rows.length &&
+                        sentFromThisSender < campaign.dailySendLimitPerSender
+                    ) {
+                        const recipientEmail = rows[globalRecipientIndex]?.[0];
+                        globalRecipientIndex++;
+                        if (!recipientEmail?.trim()) continue;
+
+                        const logId = new ObjectId();
+
+                        // Validate email before sending
+                        const validation = await validateEmail(recipientEmail.trim());
+                        if (!validation.isValid) {
+                            console.log(`  - 🚫 Skipping invalid email ${recipientEmail}: ${validation.reason}`);
+                            await db.collection("EmailLog").insertOne({
+                                _id: logId,
+                                status: "failed",
+                                failureReason: `Validation failed: ${validation.reason}`,
+                                failureCategory: 'validation',
+                                originalError: validation.reason,
+                                campaignId: campaign.campaignId,
+                                recipientEmail: recipientEmail.trim(),
+                                senderEmail: authEmail.email,
+                                sentAt: new Date(),
+                            });
+                            continue;
+                        }
+
+                        sentFromThisSender++;
+                        const trackingPixelUrl = `${process.env.YOUR_DOMAIN}/api/track?logId=${logId.toHexString()}`;
+                        const emailBodyWithPixel = `${campaign.emailBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/>`;
+
+                        const mailOptions: any = {
+                            from: authEmail.name
+                                ? `${authEmail.name} <${authEmail.email}>`
+                                : authEmail.email,
+                            to: recipientEmail,
+                            subject: campaign.emailSubject,
+                            html: emailBodyWithPixel,
+                        };
+
+                        if (campaign.attachments?.length > 0) {
+                            mailOptions.attachments = campaign.attachments.map(
+                                (attachment: any) => ({
+                                    filename: attachment.filename,
+                                    content: Buffer.from(attachment.content, "base64"),
+                                    contentType: attachment.contentType,
+                                })
+                            );
+                        }
+
+                        try {
+                            await transporter.sendMail(mailOptions);
+                            console.log(`  - ✅ Sent to ${recipientEmail.trim()}`);
+                            await db.collection("EmailLog").insertOne({
+                                _id: logId,
+                                status: "sent",
+                                campaignId: campaign.campaignId,
+                                recipientEmail: recipientEmail.trim(),
+                                senderEmail: authEmail.email,
+                                sentAt: new Date(),
+                            });
+                        } catch (emailError: any) {
+                            const categorizedError = categorizeEmailError(emailError);
+                            console.log(`  - ❌ Failed to send to ${recipientEmail.trim()}: [${categorizedError.category.toUpperCase()}] ${categorizedError.reason}`);
+
+                            await db.collection("EmailLog").insertOne({
+                                _id: logId,
+                                status: "failed",
+                                failureReason: categorizedError.reason,
+                                failureCategory: categorizedError.category,
+                                originalError: categorizedError.originalError,
+                                campaignId: campaign.campaignId,
+                                recipientEmail: recipientEmail.trim(),
+                                senderEmail: authEmail.email,
+                                sentAt: new Date(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            await db.collection("Campaigns").updateOne(
+                { _id: campaign._id },
+                { $set: { todaySent: today.toDateString() } } // Use toDateString to be consistent
+            );
+            console.log(`  - 📝 Marked campaign as sent for today.`);
+        }
+
+        console.log("\n✅ Email job completed successfully!");
+        process.exit(0);
+
+    } catch (error) {
+        console.error("🔥 Critical error in sendMail script:", error);
+        process.exit(1);
+    }
+})();
