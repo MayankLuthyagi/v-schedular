@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
-import { signInWithPopup, signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, getRedirectResult, User } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 
@@ -17,35 +17,8 @@ export default function LoginPage() {
             : '/api'
     );
 
-    // Clear any existing auth state on component mount and handle redirect result
-    useEffect(() => {
-        const clearAuthState = async () => {
-            try {
-                await auth.signOut();
-            } catch {
-                console.log('No existing auth state to clear');
-            }
-        };
-
-        const handleRedirectResult = async () => {
-            try {
-                const result = await getRedirectResult(auth);
-                if (result && result.user) {
-                    // Handle successful redirect sign-in
-                    await handleSuccessfulSignIn(result.user);
-                }
-            } catch (error) {
-                console.error('Error handling redirect result:', error);
-                setError('Sign-in failed after redirect. Please try again.');
-            }
-        };
-
-        clearAuthState();
-        handleRedirectResult();
-    }, []);
-
     // Handle successful sign-in (shared between popup and redirect)
-    const handleSuccessfulSignIn = async (user: any) => {
+    const handleSuccessfulSignIn = useCallback(async (user: User) => {
         if (!user || !user.email) {
             throw new Error('No user information received');
         }
@@ -113,12 +86,37 @@ export default function LoginPage() {
             router.push('/dashboard');
         } else {
             setError('Unauthorized user');
-            alert('Access Denied 🛑\n\nYou don\'t have access to this page.');
+            alert('Access Denied 🛑\n\nYou don\u0027t have access to this page.');
             await auth.signOut();
         }
-    };
+    }, [API_BASE_URL, router]);
 
-    // Sign in with Google (with fallback to redirect)
+    // Clear any existing auth state on component mount and handle redirect result
+    useEffect(() => {
+        const clearAuthState = async () => {
+            try {
+                await auth.signOut();
+            } catch {
+                console.log('No existing auth state to clear');
+            }
+        };
+
+        const handleRedirectResult = async () => {
+            try {
+                const result = await getRedirectResult(auth);
+                if (result && result.user) {
+                    // Handle successful redirect sign-in
+                    await handleSuccessfulSignIn(result.user);
+                }
+            } catch (error) {
+                console.error('Error handling redirect result:', error);
+                setError('Sign-in failed after redirect. Please try again.');
+            }
+        };
+
+        clearAuthState();
+        handleRedirectResult();
+    }, [handleSuccessfulSignIn]);    // Sign in with Google (with fallback to redirect)
     const signInWithGoogle = async () => {
         if (isLoading) return; // Prevent multiple simultaneous calls
 
@@ -136,20 +134,22 @@ export default function LoginPage() {
                 // Try popup first
                 const result = await signInWithPopup(auth, googleProvider);
                 await handleSuccessfulSignIn(result.user);
-            } catch (popupError: any) {
+            } catch (popupError: unknown) {
                 console.error('Popup sign-in failed:', popupError);
-                
+
                 // If popup fails, try redirect
-                if (popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/popup-closed-by-user') {
-                    console.log('Popup blocked, trying redirect method...');
-                    setError('Popup blocked. Redirecting to Google sign-in...');
-                    
-                    // Use redirect as fallback
-                    await signInWithRedirect(auth, googleProvider);
-                    return; // Don't continue execution as redirect will handle the rest
-                } else {
-                    throw popupError; // Re-throw other errors
+                if (popupError && typeof popupError === 'object' && 'code' in popupError) {
+                    const firebaseError = popupError as { code: string };
+                    if (firebaseError.code === 'auth/popup-blocked' || firebaseError.code === 'auth/popup-closed-by-user') {
+                        console.log('Popup blocked, trying redirect method...');
+                        setError('Popup blocked. Redirecting to Google sign-in...');
+
+                        // Use redirect as fallback
+                        await signInWithRedirect(auth, googleProvider);
+                        return; // Don't continue execution as redirect will handle the rest
+                    }
                 }
+                throw popupError; // Re-throw other errors
             }
         } catch (error: unknown) {
             console.error('Error during sign-in:', error);
@@ -212,7 +212,7 @@ export default function LoginPage() {
                         {error}
                         {error.includes('ad blocker') && (
                             <div className="mt-2 text-sm">
-                                <p>If you're using an ad blocker, please:</p>
+                                <p>If you&apos;re using an ad blocker, please:</p>
                                 <ul className="list-disc list-inside mt-1">
                                     <li>Disable it for this site</li>
                                     <li>Or add this site to your whitelist</li>
