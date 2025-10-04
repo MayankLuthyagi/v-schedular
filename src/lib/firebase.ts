@@ -20,7 +20,7 @@ export const auth = getAuth(app);
 // Initialize Google Provider with custom parameters
 export const googleProvider = new GoogleAuthProvider();
 
-// Add custom parameters to prevent caching issues
+// Add custom parameters to prevent caching issues and improve reliability
 googleProvider.setCustomParameters({
     prompt: 'select_account'
 });

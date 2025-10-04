@@ -11,7 +11,11 @@ export default function LoginPage() {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://schedular-plum.vercel.app/api';
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || (
+        typeof window !== 'undefined' && window.location.origin 
+            ? `${window.location.origin}/api` 
+            : '/api'
+    );
 
     // Clear any existing auth state on component mount
     useEffect(() => {
@@ -46,9 +50,31 @@ export default function LoginPage() {
                 throw new Error('No user information received');
             }
 
-            // Fetch authorized emails
-            const response = await fetch(`${API_BASE_URL}/authUsers`);
-            const emailData = await response.json();
+            // Fetch authorized emails with retry logic
+            let response;
+            let emailData;
+            
+            try {
+                response = await fetch(`${API_BASE_URL}/authUsers`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    // Add timeout and other fetch options for production
+                    signal: AbortSignal.timeout(10000), // 10 second timeout
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                emailData = await response.json();
+            } catch (fetchError) {
+                console.error('Error fetching auth users:', fetchError);
+                setError('Unable to verify user permissions. Please try again.');
+                await auth.signOut();
+                return;
+            }
 
             // Validate email
             if (emailData?.success && emailData.users && emailData.users.some((userData: { email: string }) => userData.email === user.email)) {

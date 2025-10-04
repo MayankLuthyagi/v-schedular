@@ -2,18 +2,32 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/db';
 import { ObjectId } from 'mongodb';
 
+// Helper function to add CORS headers
+function addCorsHeaders(response: NextResponse) {
+    response.headers.set('Access-Control-Allow-Origin', '*');
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return response;
+}
+
+export async function OPTIONS() {
+    return addCorsHeaders(new NextResponse(null, { status: 200 }));
+}
+
 export async function GET() {
     try {
         const { db } = await connectToDatabase();
         const users = await db.collection('AuthUsers').find({}).toArray();
 
-        return NextResponse.json({ success: true, users });
+        const response = NextResponse.json({ success: true, users });
+        return addCorsHeaders(response);
     } catch (error) {
         console.error('Error fetching users:', error);
-        return NextResponse.json(
+        const response = NextResponse.json(
             { success: false, error: 'Failed to fetch users' },
             { status: 500 }
         );
+        return addCorsHeaders(response);
     }
 }
 
@@ -23,10 +37,11 @@ export async function DELETE(request: NextRequest) {
         const { id } = await request.json();
 
         if (!id) {
-            return NextResponse.json(
+            const response = NextResponse.json(
                 { success: false, error: 'User ID is required' },
                 { status: 400 }
             );
+            return addCorsHeaders(response);
         }
 
         // Convert string ID to MongoDB ObjectId
@@ -34,28 +49,32 @@ export async function DELETE(request: NextRequest) {
         try {
             objectId = new ObjectId(id);
         } catch {
-            return NextResponse.json(
+            const response = NextResponse.json(
                 { success: false, error: 'Invalid user ID format' },
                 { status: 400 }
             );
+            return addCorsHeaders(response);
         }
 
         const result = await db.collection('AuthUsers').deleteOne({ _id: objectId });
 
         if (result.deletedCount === 0) {
-            return NextResponse.json(
+            const response = NextResponse.json(
                 { success: false, error: 'User not found' },
                 { status: 404 }
             );
+            return addCorsHeaders(response);
         }
 
-        return NextResponse.json({ success: true });
+        const response = NextResponse.json({ success: true });
+        return addCorsHeaders(response);
     } catch (error) {
         console.error('Error deleting user:', error);
-        return NextResponse.json(
+        const response = NextResponse.json(
             { success: false, error: 'Failed to delete user' },
             { status: 500 }
         );
+        return addCorsHeaders(response);
     }
 }
 
@@ -91,16 +110,18 @@ export async function POST(request: NextRequest) {
 
         const result = await db.collection('EmailAdmin').insertOne(newUser);
 
-        return NextResponse.json({
+        const response = NextResponse.json({
             success: true,
             user: { ...newUser, _id: result.insertedId }
         });
+        return addCorsHeaders(response);
     } catch (error) {
         console.error('Error creating user:', error);
-        return NextResponse.json(
+        const response = NextResponse.json(
             { success: false, error: 'Failed to create user' },
             { status: 500 }
         );
+        return addCorsHeaders(response);
     }
 }
 
@@ -110,10 +131,11 @@ export async function PUT(request: NextRequest) {
         const { id, email, name } = body;
 
         if (!id || !email || !name) {
-            return NextResponse.json(
+            const response = NextResponse.json(
                 { success: false, error: 'ID, email and name are required' },
                 { status: 400 }
             );
+            return addCorsHeaders(response);
         }
 
         const { db } = await connectToDatabase();
@@ -123,10 +145,11 @@ export async function PUT(request: NextRequest) {
         try {
             objectId = new ObjectId(id);
         } catch {
-            return NextResponse.json(
+            const response = NextResponse.json(
                 { success: false, error: 'Invalid user ID format' },
                 { status: 400 }
             );
+            return addCorsHeaders(response);
         }
 
         // Check if another user with the same email exists (excluding current user)
@@ -136,10 +159,11 @@ export async function PUT(request: NextRequest) {
         });
 
         if (existingUser) {
-            return NextResponse.json(
+            const response = NextResponse.json(
                 { success: false, error: 'User with this email already exists' },
                 { status: 400 }
             );
+            return addCorsHeaders(response);
         }
 
         const updateData = {
@@ -154,24 +178,27 @@ export async function PUT(request: NextRequest) {
         );
 
         if (result.matchedCount === 0) {
-            return NextResponse.json(
+            const response = NextResponse.json(
                 { success: false, error: 'User not found' },
                 { status: 404 }
             );
+            return addCorsHeaders(response);
         }
 
         // Get the updated user
         const updatedUser = await db.collection('EmailAdmin').findOne({ _id: objectId });
 
-        return NextResponse.json({
+        const response = NextResponse.json({
             success: true,
             user: updatedUser
         });
+        return addCorsHeaders(response);
     } catch (error) {
         console.error('Error updating user:', error);
-        return NextResponse.json(
+        const response = NextResponse.json(
             { success: false, error: 'Failed to update user' },
             { status: 500 }
         );
+        return addCorsHeaders(response);
     }
 }
