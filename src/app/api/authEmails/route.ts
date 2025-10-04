@@ -33,7 +33,7 @@ export async function DELETE(request: NextRequest) {
         let objectId;
         try {
             objectId = new ObjectId(id);
-        } catch (error) {
+        } catch {
             return NextResponse.json(
                 { success: false, error: 'Invalid email ID format' },
                 { status: 400 }
@@ -124,7 +124,7 @@ export async function PUT(request: NextRequest) {
         let objectId;
         try {
             objectId = new ObjectId(id);
-        } catch (error) {
+        } catch {
             return NextResponse.json(
                 { success: false, error: 'Invalid email ID format' },
                 { status: 400 }

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/db';
-import { ObjectId } from 'mongodb';
 
 export async function POST(request: NextRequest) {
     try {
@@ -18,7 +17,7 @@ export async function POST(request: NextRequest) {
                 const bounceReason = bouncedRecipient.diagnosticCode || 'Email bounced';
 
                 // Find and update the email log entry
-                const updateResult = await db.collection('EmailLog').updateOne(
+                await db.collection('EmailLog').updateOne(
                     {
                         recipientEmail: emailAddress,
                         status: 'sent'

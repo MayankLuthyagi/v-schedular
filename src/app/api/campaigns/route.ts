@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
         const formData = await request.formData();
 
         // Extract form data
-        const campaignData: any = {
+        const campaignData: Record<string, unknown> = {
             campaignId: uuidv4(),
             campaignName: formData.get('campaignName') as string,
             emailSubject: formData.get('emailSubject') as string,
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
         }
 
         const { db } = await connectToDatabase();
-        const result = await db.collection('Campaigns').insertOne(campaignData);
+        await db.collection('Campaigns').insertOne(campaignData);
 
         return NextResponse.json({
             success: true,
@@ -117,7 +117,7 @@ export async function PUT(request: NextRequest) {
         }
 
         // Extract form data for update
-        const updateData: any = {
+        const updateData: Record<string, unknown> = {
             campaignName: formData.get('campaignName') as string,
             emailSubject: formData.get('emailSubject') as string,
             emailBody: formData.get('emailBody') as string,

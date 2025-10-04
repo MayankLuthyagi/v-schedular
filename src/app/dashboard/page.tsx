@@ -21,9 +21,7 @@ export default function DashboardPage() {
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
-    const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
     const [emailLogsCount, setEmailLogsCount] = useState(0);
-    const [emailLogsSent, setEmailLogsSent] = useState<EmailLog[]>([]);
     const [emailLogsSentCount, setEmailLogsSentCount] = useState(0);
     const handleDeleteCampaign = async (campaignId: string) => {
         try {
@@ -67,10 +65,8 @@ export default function DashboardPage() {
                 const response = await fetch('/api/emailLog?today=true');
                 if (response.ok) {
                     const emailLogs = await response.json();
-                    setEmailLogs(emailLogs);
                     setEmailLogsCount(emailLogs.length);
                     const sentLogs = emailLogs.filter((e: EmailLog) => e.status === 'sent');
-                    setEmailLogsSent(sentLogs);
                     setEmailLogsSentCount(sentLogs.length);
                 }
             } catch (error) {
@@ -166,11 +162,6 @@ export default function DashboardPage() {
         }
     };
 
-    const handleEditCampaign = (campaign: Campaign) => {
-        setEditingCampaign(campaign);
-        setIsCampaignFormOpen(true);
-    };
-
     const handleCloseCampaignForm = () => {
         setIsCampaignFormOpen(false);
         setEditingCampaign(null);
@@ -250,7 +241,7 @@ export default function DashboardPage() {
                                             <div className="flex justify-between items-start">
                                                 <div>
                                                     <p className="text-base font-semibold text-gray-600">
-                                                        Today's Email Delivery
+                                                        Today&apos;s Email Delivery
                                                     </p>
                                                     <div className="flex items-end mt-2">
                                                         <p className="text-3xl font-bold text-gray-900">{sent}</p>
@@ -399,7 +390,7 @@ export default function DashboardPage() {
                                         <h3 className="text-lg leading-6 font-medium text-gray-900 mt-5">Delete Campaign</h3>
                                         <div className="mt-2 px-7 py-3">
                                             <p className="text-sm text-gray-500">
-                                                Are you sure you want to delete "{campaignToDelete?.campaignName}"? This action cannot be undone.
+                                                Are you sure you want to delete &quot;{campaignToDelete?.campaignName}&quot;? This action cannot be undone.
                                             </p>
                                         </div>
                                         <div className="items-center px-4 py-3">

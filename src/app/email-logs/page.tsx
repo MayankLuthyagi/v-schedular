@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { HiArrowLeft, HiRefresh, HiEye, HiX } from "react-icons/hi";
 
@@ -29,11 +29,7 @@ export default function EmailLogsPage() {
     const [selectedLog, setSelectedLog] = useState<EmailLog | null>(null);
     const [markingBounced, setMarkingBounced] = useState(false);
 
-    useEffect(() => {
-        fetchEmailLogs();
-    }, [filter]);
-
-    const fetchEmailLogs = async () => {
+    const fetchEmailLogs = useCallback(async () => {
         try {
             setLoading(true);
             const queryParam = filter === 'today' ? '?today=true' : '';
@@ -64,7 +60,11 @@ export default function EmailLogsPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [filter]);
+
+    useEffect(() => {
+        fetchEmailLogs();
+    }, [fetchEmailLogs]);
 
     const filteredLogs = emailLogs.filter(log =>
         log.recipientEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -169,7 +169,7 @@ export default function EmailLogsPage() {
                                     {['all', 'today', 'sent', 'failed', 'opened', 'bounced'].map((filterOption) => (
                                         <button
                                             key={filterOption}
-                                            onClick={() => setFilter(filterOption as any)}
+                                            onClick={() => setFilter(filterOption as 'all' | 'today' | 'sent' | 'failed' | 'opened' | 'bounced')}
                                             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${filter === filterOption
                                                 ? 'bg-blue-600 text-white'
                                                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -319,13 +319,13 @@ export default function EmailLogsPage() {
                                                 Failure Reason
                                                 {selectedLog.failureCategory && (
                                                     <span className={`ml-2 px-2 py-1 text-xs rounded-full ${selectedLog.failureCategory === 'validation' ? 'bg-yellow-100 text-yellow-800' :
-                                                            selectedLog.failureCategory === 'authentication' ? 'bg-red-100 text-red-800' :
-                                                                selectedLog.failureCategory === 'rate_limit' ? 'bg-orange-100 text-orange-800' :
-                                                                    selectedLog.failureCategory === 'network' ? 'bg-purple-100 text-purple-800' :
-                                                                        selectedLog.failureCategory === 'recipient' ? 'bg-blue-100 text-blue-800' :
-                                                                            selectedLog.failureCategory === 'attachment' ? 'bg-green-100 text-green-800' :
-                                                                                selectedLog.failureCategory === 'configuration' ? 'bg-pink-100 text-pink-800' :
-                                                                                    'bg-gray-100 text-gray-800'
+                                                        selectedLog.failureCategory === 'authentication' ? 'bg-red-100 text-red-800' :
+                                                            selectedLog.failureCategory === 'rate_limit' ? 'bg-orange-100 text-orange-800' :
+                                                                selectedLog.failureCategory === 'network' ? 'bg-purple-100 text-purple-800' :
+                                                                    selectedLog.failureCategory === 'recipient' ? 'bg-blue-100 text-blue-800' :
+                                                                        selectedLog.failureCategory === 'attachment' ? 'bg-green-100 text-green-800' :
+                                                                            selectedLog.failureCategory === 'configuration' ? 'bg-pink-100 text-pink-800' :
+                                                                                'bg-gray-100 text-gray-800'
                                                         }`}>
                                                         {selectedLog.failureCategory}
                                                     </span>
@@ -343,7 +343,7 @@ export default function EmailLogsPage() {
                                                 Bounce Reason
                                                 {selectedLog.bounceCategory && (
                                                     <span className={`ml-2 px-2 py-1 text-xs rounded-full ${selectedLog.bounceCategory === 'validation' ? 'bg-yellow-100 text-yellow-800' :
-                                                            'bg-blue-100 text-blue-800'
+                                                        'bg-blue-100 text-blue-800'
                                                         }`}>
                                                         {selectedLog.bounceCategory}
                                                     </span>
