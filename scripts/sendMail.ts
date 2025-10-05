@@ -232,6 +232,7 @@ function categorizeEmailError(error: any): EmailError {
                             campaignId: campaign.campaignId,
                             recipientEmail: invalid.email,
                             senderEmail: authEmail.email,
+                            sendMethod: campaign.sendMethod,
                             status: "failed",
                             failureReason: `Validation failed: ${invalid.reason}`,
                             failureCategory: 'validation',
@@ -275,6 +276,7 @@ function categorizeEmailError(error: any): EmailError {
                             campaignId: campaign.campaignId,
                             recipientEmail: email,
                             senderEmail: authEmail.email,
+                            sendMethod: campaign.sendMethod,
                             status: "sent",
                             sentAt: new Date(),
                         }));
@@ -310,14 +312,20 @@ function categorizeEmailError(error: any): EmailError {
                                 campaignId: campaign.campaignId,
                                 recipientEmail: recipientEmail.trim(),
                                 senderEmail: authEmail.email,
+                                sendMethod: campaign.sendMethod,
                                 sentAt: new Date(),
                             });
                             continue;
                         }
 
                         sentFromThisSender++;
-                        const trackingPixelUrl = `${process.env.YOUR_DOMAIN}/api/track?logId=${logId.toHexString()}`;
-                        const emailBodyWithPixel = `${campaign.emailBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/>`;
+
+                        // Only add tracking pixel for one-on-one emails
+                        let emailBodyToSend = campaign.emailBody;
+                        if (campaign.sendMethod === 'one-on-one') {
+                            const trackingPixelUrl = `https://schedular-plum.vercel.app/api/track?logId=${logId.toHexString()}`;
+                            emailBodyToSend = `${campaign.emailBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/>`;
+                        }
 
                         const mailOptions: any = {
                             from: authEmail.name
@@ -325,7 +333,7 @@ function categorizeEmailError(error: any): EmailError {
                                 : authEmail.email,
                             to: recipientEmail,
                             subject: campaign.emailSubject,
-                            html: emailBodyWithPixel,
+                            html: emailBodyToSend,
                         };
 
                         if (campaign.attachments?.length > 0) {
@@ -347,6 +355,7 @@ function categorizeEmailError(error: any): EmailError {
                                 campaignId: campaign.campaignId,
                                 recipientEmail: recipientEmail.trim(),
                                 senderEmail: authEmail.email,
+                                sendMethod: campaign.sendMethod,
                                 sentAt: new Date(),
                             });
                         } catch (emailError: any) {
@@ -362,6 +371,7 @@ function categorizeEmailError(error: any): EmailError {
                                 campaignId: campaign.campaignId,
                                 recipientEmail: recipientEmail.trim(),
                                 senderEmail: authEmail.email,
+                                sendMethod: campaign.sendMethod,
                                 sentAt: new Date(),
                             });
                         }

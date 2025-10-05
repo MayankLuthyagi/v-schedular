@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
         const { db } = await connectToDatabase();
 
         // Check if user already exists
-        const existingUser = await db.collection('EmailAdmin').findOne({ email });
+        const existingUser = await db.collection('AuthUsers').findOne({ email });
         if (existingUser) {
             return NextResponse.json(
                 { success: false, error: 'User with this email already exists' },
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
             updatedAt: new Date(),
         };
 
-        const result = await db.collection('EmailAdmin').insertOne(newUser);
+        const result = await db.collection('AuthUsers').insertOne(newUser);
 
         const response = NextResponse.json({
             success: true,
@@ -153,7 +153,7 @@ export async function PUT(request: NextRequest) {
         }
 
         // Check if another user with the same email exists (excluding current user)
-        const existingUser = await db.collection('EmailAdmin').findOne({
+        const existingUser = await db.collection('AuthUsers').findOne({
             email,
             _id: { $ne: objectId }
         });
@@ -172,7 +172,7 @@ export async function PUT(request: NextRequest) {
             updatedAt: new Date(),
         };
 
-        const result = await db.collection('EmailAdmin').updateOne(
+        const result = await db.collection('AuthUsers').updateOne(
             { _id: objectId },
             { $set: updateData }
         );
@@ -186,7 +186,7 @@ export async function PUT(request: NextRequest) {
         }
 
         // Get the updated user
-        const updatedUser = await db.collection('EmailAdmin').findOne({ _id: objectId });
+        const updatedUser = await db.collection('AuthUsers').findOne({ _id: objectId });
 
         const response = NextResponse.json({
             success: true,

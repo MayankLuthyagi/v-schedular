@@ -222,6 +222,7 @@ export async function SendMail() {
                             campaignId: campaign.campaignId,
                             recipientEmail: email,
                             senderEmail: authEmail.email,
+                            sendMethod: campaign.sendMethod,
                             status: 'sent',
                             sentAt: new Date(),
                         }));
@@ -236,6 +237,7 @@ export async function SendMail() {
                             campaignId: campaign.campaignId,
                             recipientEmail: email,
                             senderEmail: authEmail.email,
+                            sendMethod: campaign.sendMethod,
                             status: 'failed',
                             failureReason: categorizedError.reason,
                             failureCategory: categorizedError.category,
@@ -258,14 +260,19 @@ export async function SendMail() {
 
                         // This is the individual tracking logic from the previous answer
                         const logId = new ObjectId();
-                        const trackingPixelUrl = `${process.env.YOUR_DOMAIN}/api/track?logId=${logId.toHexString()}`;
-                        const emailBodyWithPixel = `${campaign.emailBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/>`;
+
+                        // Only add tracking pixel for one-on-one emails
+                        let emailBodyToSend = campaign.emailBody;
+                        if (campaign.sendMethod === 'one-on-one') {
+                            const trackingPixelUrl = `${process.env.YOUR_DOMAIN}/api/track?logId=${logId.toHexString()}`;
+                            emailBodyToSend = `${campaign.emailBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/>`;
+                        }
 
                         const mailOptions: nodemailer.SendMailOptions = {
                             from: authEmail.name ? `${authEmail.name} <${authEmail.email}>` : authEmail.email,
                             to: recipientEmail,
                             subject: campaign.emailSubject,
-                            html: emailBodyWithPixel,
+                            html: emailBodyToSend,
                         };
 
                         // Handle attachments from MongoDB
@@ -284,6 +291,7 @@ export async function SendMail() {
                                 campaignId: campaign.campaignId,
                                 recipientEmail: recipientEmail.trim(),
                                 senderEmail: authEmail.email,
+                                sendMethod: campaign.sendMethod,
                                 sentAt: new Date(),
                             });
                         } catch (emailError: unknown) {
@@ -297,6 +305,7 @@ export async function SendMail() {
                                 campaignId: campaign.campaignId,
                                 recipientEmail: recipientEmail.trim(),
                                 senderEmail: authEmail.email,
+                                sendMethod: campaign.sendMethod,
                                 sentAt: new Date(),
                             });
                         }

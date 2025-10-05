@@ -33,6 +33,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, editCampaign }
         dailySendLimitPerSender: 10,
         sendMethod: 'one-on-one',
         toEmail: '',
+        replyToEmail: '',
         sheetId: '',
         attachment: null,
         attachmentNote: '',
@@ -57,6 +58,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, editCampaign }
                 dailySendLimitPerSender: editCampaign.dailySendLimitPerSender || 10,
                 sendMethod: editCampaign.sendMethod || 'one-on-one',
                 toEmail: editCampaign.toEmail || '',
+                replyToEmail: editCampaign.replyToEmail || '',
                 sheetId: editCampaign.sheetId || '',
                 attachment: null, // File input will be reset
                 attachmentNote: '',
@@ -76,6 +78,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, editCampaign }
                 dailySendLimitPerSender: 10,
                 sendMethod: 'one-on-one',
                 toEmail: '',
+                replyToEmail: '',
                 sheetId: '',
                 attachment: null,
                 attachmentNote: '',
@@ -186,6 +189,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, editCampaign }
                     dailySendLimitPerSender: 10,
                     sendMethod: 'one-on-one',
                     toEmail: '',
+                    replyToEmail: '',
                     sheetId: '',
                     attachment: null,
                     attachmentNote: '',
@@ -407,6 +411,21 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, editCampaign }
                                 />
                             </div>
                         )}
+
+                        {/* Reply To Email */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Reply To Email Address *
+                            </label>
+                            <input
+                                type="email"
+                                name="replyToEmail"
+                                value={formData.replyToEmail || ''}
+                                onChange={handleInputChange}
+                                required
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
                         {/* Sheet ID */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">

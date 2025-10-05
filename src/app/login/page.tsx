@@ -223,16 +223,6 @@ export default function LoginPage() {
                     </div>
                 )}
 
-                {/* Help Text */}
-                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-blue-700 rounded text-sm">
-                    <p><strong>Note:</strong> If sign-in fails, please ensure:</p>
-                    <ul className="list-disc list-inside mt-1">
-                        <li>Pop-ups are enabled for this site</li>
-                        <li>Ad blockers are disabled</li>
-                        <li>You have a stable internet connection</li>
-                    </ul>
-                </div>
-
                 {/* Sign-in Options */}
                 <div className="space-y-4">
                     {/* Admin Panel Button */}

@@ -9,6 +9,7 @@ interface EmailLog {
     campaignId: string;
     recipientEmail: string;
     senderEmail: string;
+    sendMethod: 'one-on-one' | 'cc' | 'bcc';
     status: 'sent' | 'failed' | 'opened' | 'bounced';
     sentAt: string;
     openedAt?: string;
@@ -302,6 +303,15 @@ export default function EmailLogsPage() {
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700">Campaign ID</label>
                                         <p className="mt-1 text-sm text-gray-900 font-mono">{selectedLog.campaignId}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">Send Method</label>
+                                        <p className="mt-1 text-sm text-gray-900 capitalize">
+                                            {selectedLog.sendMethod}
+                                            {(selectedLog.sendMethod === 'cc' || selectedLog.sendMethod === 'bcc') && (
+                                                <span className="ml-2 text-xs text-gray-500">(No open tracking)</span>
+                                            )}
+                                        </p>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700">Sent At</label>

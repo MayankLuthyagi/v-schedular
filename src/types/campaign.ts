@@ -18,6 +18,7 @@ export interface Campaign {
     dailySendLimitPerSender: number;
     sendMethod: 'one-on-one' | 'cc' | 'bcc';
     toEmail: string;
+    replyToEmail: string;
     sheetId: string;
     attachments: Attachment[]; // Store attachments directly in MongoDB
     isActive: boolean;
@@ -38,6 +39,7 @@ export interface CampaignFormData {
     dailySendLimitPerSender: number;
     sendMethod: 'one-on-one' | 'cc' | 'bcc';
     toEmail: string;
+    replyToEmail: string;
     sheetId: string;
     attachment?: File | null;
     attachmentNote?: string;

@@ -23,6 +23,7 @@ export default function DashboardPage() {
     const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
     const [emailLogsCount, setEmailLogsCount] = useState(0);
     const [emailLogsSentCount, setEmailLogsSentCount] = useState(0);
+    const [emailLogsOpenedCount, setEmailLogsOpenedCount] = useState(0);
     const handleDeleteCampaign = async (campaignId: string) => {
         try {
             const response = await fetch(`/api/campaigns?campaignId=${campaignId}`, {
@@ -66,8 +67,14 @@ export default function DashboardPage() {
                 if (response.ok) {
                     const emailLogs = await response.json();
                     setEmailLogsCount(emailLogs.length);
-                    const sentLogs = emailLogs.filter((e: EmailLog) => e.status === 'sent');
+                    const sentLogs = emailLogs.filter((e: EmailLog) => e.status === 'sent' || e.status === 'opened');
                     setEmailLogsSentCount(sentLogs.length);
+                    // Filter opened emails to only count one-on-one emails (not cc or bcc)
+                    // CC/BCC emails can't be individually tracked for opens since they're sent as batch emails
+                    const openedLogs = emailLogs.filter((e: EmailLog) =>
+                        e.status === 'opened' && e.sendMethod !== 'cc' && e.sendMethod !== 'bcc'
+                    );
+                    setEmailLogsOpenedCount(openedLogs.length);
                 }
             } catch (error) {
                 console.error('Error fetching email logs:', error);
@@ -125,6 +132,7 @@ export default function DashboardPage() {
             formData.append('dailySendLimitPerSender', campaignData.dailySendLimitPerSender.toString());
             formData.append('sendMethod', campaignData.sendMethod);
             formData.append('toEmail', campaignData.toEmail);
+            formData.append('replyToEmail', campaignData.replyToEmail);
             formData.append('sheetId', campaignData.sheetId);
             formData.append('isActive', campaignData.isActive.toString());
 
@@ -226,7 +234,7 @@ export default function DashboardPage() {
                                     </p>
                                 </div>
                             </div>
-                            {/* Success Email */}
+                            {/* Today's Email Delivery */}
                             {(() => {
                                 // Calculate percentage safely, avoiding division by zero
                                 const total = emailLogsCount;
@@ -264,6 +272,54 @@ export default function DashboardPage() {
                                                     <div
                                                         className="bg-blue-600 h-2.5 rounded-full"
                                                         style={{ width: `${percentage}%` }}
+                                                    ></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+                            {/* Today's Email Opens */}
+                            {(() => {
+                                // Calculate open rate safely, avoiding division by zero
+                                const sent = emailLogsSentCount;
+                                const opened = emailLogsOpenedCount;
+                                const openRate = sent > 0 ? ((opened / sent) * 100).toFixed(2) : '0.00';
+                                return (
+                                    <div
+                                        className="bg-white overflow-hidden shadow rounded-lg cursor-pointer hover:shadow-xl transition-shadow duration-300 ease-in-out"
+                                        onClick={() => router.push('/email-logs')}
+                                    >
+                                        <div className="p-5">
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <p className="text-base font-semibold text-gray-600">
+                                                        Today&apos;s Email Opens (One-on-One)
+                                                    </p>
+                                                    <p className="text-xs text-gray-500 mt-1">
+                                                        Filtered for genuine opens (excludes automated opens)
+                                                    </p>
+                                                    <div className="flex items-end mt-2">
+                                                        <p className="text-3xl font-bold text-gray-900">{opened}</p>
+                                                        <p className="text-lg font-medium text-gray-500 ml-2">/ {sent} opened</p>
+                                                    </div>
+                                                </div>
+                                                <div className="bg-green-100 p-3 rounded-full">
+                                                    {/* Using an Open Mail icon */}
+                                                    <svg className="h-7 w-7 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 9v.906a2.25 2.25 0 01-1.183 1.981l-6.478 3.488M2.25 9v.906a2.25 2.25 0 001.183 1.981l6.478 3.488m8.839-5.657l-4.548-2.447A2.25 2.25 0 0012 6.75h0c-.625 0-1.232.242-1.683.681L3.75 12.75" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+                                            <div className="mt-4">
+                                                <div className="flex justify-between mb-1">
+                                                    <span className="text-sm font-medium text-gray-500">Open Rate</span>
+                                                    <span className="text-sm font-medium text-green-700">{openRate}%</span>
+                                                </div>
+                                                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                                    <div
+                                                        className="bg-green-600 h-2.5 rounded-full"
+                                                        style={{ width: `${openRate}%` }}
                                                     ></div>
                                                 </div>
                                             </div>

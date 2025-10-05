@@ -11,18 +11,72 @@ export async function GET(request: NextRequest) {
             return new NextResponse('Invalid tracking ID.', { status: 400 });
         }
 
+        // Get request headers for better tracking accuracy
+        const userAgent = request.headers.get('user-agent') || '';
+        const referer = request.headers.get('referer') || '';
+        const xForwardedFor = request.headers.get('x-forwarded-for') || '';
+        const realIp = request.headers.get('x-real-ip') || '';
+
+        // Skip tracking if it looks like an automated request
+        const automatedUserAgents = [
+            'googlebot',
+            'bingbot',
+            'slurp',
+            'crawler',
+            'spider',
+            'proxy',
+            'scanner',
+            'gmail',
+            'outlook-com',
+            'mailchimp',
+            'constantcontact'
+        ];
+
+        const isAutomated = automatedUserAgents.some(bot =>
+            userAgent.toLowerCase().includes(bot)
+        );
+
         const { db } = await connectToDatabase();
-        
-        // Find the log and update its status to 'opened'
-        await db.collection('EmailLog').updateOne(
-            { _id: new ObjectId(logId), status: { $ne: 'opened' } }, // Avoid multiple updates
-            {
-                $set: {
-                    status: 'opened',
-                    openedAt: new Date(),
+
+        if (!isAutomated) {
+            // First, get the email log to check timing
+            const emailLog = await db.collection('EmailLog').findOne({ _id: new ObjectId(logId) });
+
+            if (emailLog && emailLog.sentAt) {
+                const emailSentTime = new Date(emailLog.sentAt).getTime();
+                const currentTime = new Date().getTime();
+                const timeDiff = currentTime - emailSentTime;
+
+                // Only update if opened more than 10 seconds after sending
+                // This helps filter out immediate automated opens
+                if (timeDiff > 10000) { // 10 seconds
+                    // Find the log and update its status to 'opened' only for one-on-one emails
+                    await db.collection('EmailLog').updateOne(
+                        {
+                            _id: new ObjectId(logId),
+                            status: { $ne: 'opened' },
+                            sendMethod: { $nin: ['cc', 'bcc'] } // Only track opens for one-on-one emails
+                        },
+                        {
+                            $set: {
+                                status: 'opened',
+                                openedAt: new Date(),
+                                trackingData: {
+                                    userAgent,
+                                    referer,
+                                    ip: xForwardedFor || realIp,
+                                    timeDiff: timeDiff
+                                }
+                            }
+                        }
+                    );
+                } else {
+                    console.log(`Potential automated open detected (too fast): ${logId}, Time diff: ${timeDiff}ms`);
                 }
             }
-        );
+        } else {
+            console.log(`Automated request detected for email tracking: ${logId}, User Agent: ${userAgent}`);
+        }
 
     } catch (error) {
         // Log the error but don't fail the image response
