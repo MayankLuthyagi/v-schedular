@@ -41,8 +41,8 @@ const useCampaigns = () => {
             if (!response.ok) throw new Error('Failed to fetch campaigns.');
             const data = await response.json();
             setCampaigns(data);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'An error occurred');
         } finally {
             setIsLoading(false);
         }
@@ -52,7 +52,7 @@ const useCampaigns = () => {
         fetchCampaigns();
     }, [fetchCampaigns]);
 
-    const handleApiCall = async (endpoint: string, method: 'POST' | 'PUT' | 'DELETE', body?: any) => {
+    const handleApiCall = async (endpoint: string, method: 'POST' | 'PUT' | 'DELETE', body?: BodyInit) => {
         try {
             const response = await fetch(endpoint, { method, body });
             if (!response.ok) {
@@ -61,8 +61,8 @@ const useCampaigns = () => {
             }
             await fetchCampaigns(); // Refresh data on success
             return { success: true, data: await response.json() };
-        } catch (err: any) {
-            return { success: false, error: err.message };
+        } catch (err: unknown) {
+            return { success: false, error: err instanceof Error ? err.message : 'An error occurred' };
         }
     };
 
@@ -118,7 +118,7 @@ const useDashboardStats = () => {
 
                 const total = emailLogs.length;
                 const sentLogs = emailLogs.filter(e => e.status === 'sent' || e.status === 'opened');
-                const openedSentLogs = emailLogs.filter(e => (e.status === 'sent' || e.status === 'opened')  && e.sendMethod !== 'cc' && e.sendMethod !== 'bcc');
+                const openedSentLogs = emailLogs.filter(e => (e.status === 'sent' || e.status === 'opened') && e.sendMethod !== 'cc' && e.sendMethod !== 'bcc');
                 const openedLogs = emailLogs.filter(e => e.status === 'opened' && e.sendMethod !== 'cc' && e.sendMethod !== 'bcc');
 
                 const sent = sentLogs.length;
@@ -266,7 +266,7 @@ export default function DashboardPage() {
                 <main className="max-w-7xl mx-auto py-8 sm:px-6 lg:px-8">
                     {/* Stat Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div onClick={() => handleOpenForm()} className="bg-white p-6 rounded-lg shadow-sm border border-dashed border-gray-300 flex flex-col items-center justify-center text-center cursor-pointer hover:border-blue-500 hover:text-blue-600 transition group" style={{ '--hover-color': settings.themeColor } as any}>
+                        <div onClick={() => handleOpenForm()} className="bg-white p-6 rounded-lg shadow-sm border border-dashed border-gray-300 flex flex-col items-center justify-center text-center cursor-pointer hover:border-blue-500 hover:text-blue-600 transition group" style={{ '--hover-color': settings.themeColor } as React.CSSProperties}>
                             <div className="bg-gray-100 p-4 rounded-full group-hover:bg-blue-100 transition" style={{ backgroundColor: `${settings.themeColor}20` }}>
                                 <FaPlus className="h-6 w-6 text-gray-500 transition" style={{ color: settings.themeColor }} />
                             </div>
@@ -324,7 +324,18 @@ export default function DashboardPage() {
 
 // --- Sub-components for better organization --------------------------------
 
-const StatCard = ({ title, value, total, percentage, isLoading, note, onClick, themeColor }: any) => {
+interface StatCardProps {
+    title: string;
+    value: string | number;
+    total?: number;
+    percentage?: number;
+    isLoading: boolean;
+    note?: string;
+    onClick?: () => void;
+    themeColor: string;
+}
+
+const StatCard = ({ title, value, total, percentage, isLoading, note, onClick, themeColor }: StatCardProps) => {
     // Determine dynamic classes based on whether the card is clickable
     const isClickable = !!onClick;
     const containerClasses = `
@@ -336,7 +347,7 @@ const StatCard = ({ title, value, total, percentage, isLoading, note, onClick, t
         <div
             className={containerClasses}
             onClick={onClick}
-            style={isClickable ? { '--hover-border-color': themeColor } as any : {}}
+            style={isClickable ? { '--hover-border-color': themeColor } as React.CSSProperties : {}}
             onMouseEnter={isClickable ? (e) => e.currentTarget.style.borderColor = themeColor : undefined}
             onMouseLeave={isClickable ? (e) => e.currentTarget.style.borderColor = 'transparent' : undefined}
         >
@@ -364,7 +375,7 @@ const StatCard = ({ title, value, total, percentage, isLoading, note, onClick, t
 };
 
 const CampaignCard = ({ campaign, onEdit, onDelete, themeColor }: { campaign: Campaign, onEdit: () => void, onDelete: (e: React.MouseEvent) => void, themeColor: string }) => (
-    <div onClick={onEdit} className="border border-gray-200 rounded-lg p-4 bg-gray-50 hover:shadow-md transition-all cursor-pointer relative group" style={{ '--hover-border-color': themeColor } as any} onMouseEnter={(e) => e.currentTarget.style.borderColor = themeColor} onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}>
+    <div onClick={onEdit} className="border border-gray-200 rounded-lg p-4 bg-gray-50 hover:shadow-md transition-all cursor-pointer relative group" style={{ '--hover-border-color': themeColor } as React.CSSProperties} onMouseEnter={(e) => e.currentTarget.style.borderColor = themeColor} onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}>
         <button onClick={onDelete} className="absolute top-2 right-2 p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition opacity-0 group-hover:opacity-100 z-10" title="Delete Campaign">
             <FaTrash className="h-4 w-4" />
         </button>
@@ -382,7 +393,13 @@ const CampaignCard = ({ campaign, onEdit, onDelete, themeColor }: { campaign: Ca
     </div>
 );
 
-const DeleteConfirmationModal = ({ campaignName, onConfirm, onCancel }: any) => (
+interface DeleteConfirmationModalProps {
+    campaignName: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+}
+
+const DeleteConfirmationModal = ({ campaignName, onConfirm, onCancel }: DeleteConfirmationModalProps) => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
             <div className="text-center">

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm, Controller, UseFormRegister } from 'react-hook-form';
 import { CampaignFormData, Campaign } from '@/types/campaign';
 import { FiX, FiUploadCloud, FiTrash2, FiLoader, FiBold, FiItalic, FiCode } from 'react-icons/fi';
 import { createEditor, Descendant, Editor, Text } from 'slate';
@@ -467,22 +467,22 @@ interface FormInputProps {
     label: string;
     name: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    register: any;
+    register: UseFormRegister<any>;
     required?: boolean;
     type?: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    [key: string]: any;
+    placeholder?: string;
+    min?: string;
+    [key: string]: unknown;
 }
 
 interface FormSelectProps {
     label: string;
     name: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    register: any;
+    register: UseFormRegister<any>;
     required?: boolean;
     options: { value: string; label: string }[];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    [key: string]: any;
+    [key: string]: unknown;
 }
 
 const FormInput = ({ label, name, register, required, type = "text", ...props }: FormInputProps) => (

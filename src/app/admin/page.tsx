@@ -115,8 +115,8 @@ const useEmailLogs = () => {
             } else {
                 throw new Error(data.error || 'Failed to fetch logs.');
             }
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'An error occurred');
             setLogs([]);
         } finally {
             setLoading(false);
@@ -144,8 +144,8 @@ const useEmailLogs = () => {
             if (!response.ok) throw new Error(data.error || 'API error');
             fetchLogs(filter, searchTerm, page); // Refresh logs on success
             return { success: true };
-        } catch (err: any) {
-            return { success: false, error: err.message };
+        } catch (err: unknown) {
+            return { success: false, error: err instanceof Error ? err.message : 'An error occurred' };
         }
     };
 
@@ -159,8 +159,8 @@ const useEmailLogs = () => {
             if (!response.ok) throw new Error(data.error || 'Failed to delete all logs');
             fetchLogs(filter, searchTerm, page); // Refresh logs on success
             return { success: true };
-        } catch (err: any) {
-            return { success: false, error: err.message };
+        } catch (err: unknown) {
+            return { success: false, error: err instanceof Error ? err.message : 'An error occurred' };
         }
     };
 
@@ -298,8 +298,8 @@ export default function AdminDashboardPage() {
             // Refresh users list
             fetchData();
             setUserModalOpen(false);
-        } catch (error: any) {
-            console.error('Error saving user:', error.message);
+        } catch (error: unknown) {
+            console.error('Error saving user:', error instanceof Error ? error.message : 'An error occurred');
             // You could show an error notification here
         }
     };
@@ -321,8 +321,8 @@ export default function AdminDashboardPage() {
             // Refresh emails list
             fetchData();
             setEmailModalOpen(false);
-        } catch (error: any) {
-            console.error('Error saving email:', error.message);
+        } catch (error: unknown) {
+            console.error('Error saving email:', error instanceof Error ? error.message : 'An error occurred');
             // You could show an error notification here
         }
     };
@@ -343,8 +343,8 @@ export default function AdminDashboardPage() {
             // Refresh data
             fetchData();
             setDeleteConfirm(null);
-        } catch (error: any) {
-            console.error('Error deleting:', error.message);
+        } catch (error: unknown) {
+            console.error('Error deleting:', error instanceof Error ? error.message : 'An error occurred');
             // You could show an error notification here
         }
     };
@@ -452,15 +452,15 @@ export default function AdminDashboardPage() {
                             <div className="border-b border-gray-200 dark:border-gray-700">
                                 <nav className="-mb-px flex">
                                     {emailLogsAllowed && (
-                                    <button
-                                        onClick={() => setActiveSection('email-logs')}
-                                        className={`px-6 py-3 border-b-2 font-medium text-sm transition-colors cursor-pointer ${activeSection === 'email-logs'
-                                            ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                                            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                                            }`}
-                                    >
-                                        Email Logs
-                                    </button>
+                                        <button
+                                            onClick={() => setActiveSection('email-logs')}
+                                            className={`px-6 py-3 border-b-2 font-medium text-sm transition-colors cursor-pointer ${activeSection === 'email-logs'
+                                                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                                                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                                                }`}
+                                        >
+                                            Email Logs
+                                        </button>
                                     )}
                                     <button
                                         onClick={() => setActiveSection('users')}
@@ -743,7 +743,19 @@ export default function AdminDashboardPage() {
 }
 
 // Custom AdminStatCard component for dashboard-style stats
-const AdminStatCard = ({ title, value, total, percentage, isLoading, note, onClick, icon, themeColor }: any) => {
+interface AdminStatCardProps {
+    title: string;
+    value: string | number;
+    total?: number;
+    percentage?: number | string;
+    isLoading: boolean;
+    note?: string;
+    onClick?: () => void;
+    icon?: React.ReactNode;
+    themeColor: string;
+}
+
+const AdminStatCard = ({ title, value, total, percentage, isLoading, note, onClick, icon, themeColor }: AdminStatCardProps) => {
     const isClickable = !!onClick;
     const containerClasses = `
         bg-white dark:bg-gray-800 p-5 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700
@@ -754,7 +766,7 @@ const AdminStatCard = ({ title, value, total, percentage, isLoading, note, onCli
         <div
             className={containerClasses}
             onClick={onClick}
-            style={isClickable ? { '--hover-border-color': themeColor } as any : {}}
+            style={isClickable ? { '--hover-border-color': themeColor } as React.CSSProperties : {}}
             onMouseEnter={isClickable ? (e) => e.currentTarget.style.borderColor = themeColor : undefined}
             onMouseLeave={isClickable ? (e) => e.currentTarget.style.borderColor = 'transparent' : undefined}
         >
@@ -785,7 +797,14 @@ const AdminStatCard = ({ title, value, total, percentage, isLoading, note, onCli
 };
 
 // --- UI Components for Email Logs ---
-const FilterButton = ({ active, onClick, children, themeColor }: any) => (
+interface FilterButtonProps {
+    active: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+    themeColor: string;
+}
+
+const FilterButton = ({ active, onClick, children, themeColor }: FilterButtonProps) => (
     <button
         onClick={onClick}
         className={`px-3 py-1.5 rounded-md text-sm font-medium transition`}
@@ -805,7 +824,14 @@ const StatusBadge = ({ status }: { status: EmailLog['status'] }) => {
     return <span className={`px-2 py-1 text-xs font-medium rounded-full ${styles[status] || 'bg-gray-100 dark:bg-gray-700'}`}>{status}</span>;
 };
 
-const Pagination = ({ currentPage, totalPages, onPageChange, themeColor }: any) => (
+interface PaginationProps {
+    currentPage: number;
+    totalPages: number;
+    onPageChange: (page: number) => void;
+    themeColor: string;
+}
+
+const Pagination = ({ currentPage, totalPages, onPageChange, themeColor }: PaginationProps) => (
     <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-sm">
         <span className="text-gray-600 dark:text-gray-400">Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong></span>
         <div className="flex gap-2">
@@ -827,7 +853,13 @@ const Pagination = ({ currentPage, totalPages, onPageChange, themeColor }: any) 
     </div>
 );
 
-const DetailModal = ({ log, onClose, onMarkAsBounced }: any) => (
+interface DetailModalProps {
+    log: EmailLog;
+    onClose: () => void;
+    onMarkAsBounced: () => void;
+}
+
+const DetailModal = ({ log, onClose, onMarkAsBounced }: DetailModalProps) => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
@@ -908,7 +940,13 @@ const DetailModal = ({ log, onClose, onMarkAsBounced }: any) => (
     </div>
 );
 
-const BounceModal = ({ log, onClose, onConfirm }: any) => {
+interface BounceModalProps {
+    log: EmailLog;
+    onClose: () => void;
+    onConfirm: (log: EmailLog, reason: string) => Promise<{ success: boolean; error?: string }>;
+}
+
+const BounceModal = ({ log, onClose, onConfirm }: BounceModalProps) => {
     const [reason, setReason] = useState('');
     const [isSubmitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
@@ -924,7 +962,7 @@ const BounceModal = ({ log, onClose, onConfirm }: any) => {
         if (result.success) {
             onClose();
         } else {
-            setError(result.error);
+            setError(result.error || 'An error occurred');
         }
         setSubmitting(false);
     };
@@ -1007,10 +1045,19 @@ const DeleteAllModal = ({ onClose, onConfirm }: { onClose: () => void; onConfirm
 };
 
 // User Modal Component
-const UserModal = ({ isOpen, onClose, onSubmit, userForm, setUserForm, editingUser }: any) => {
+interface UserModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onSubmit: () => void;
+    userForm: { name: string; email: string };
+    setUserForm: (form: { name: string; email: string }) => void;
+    editingUser: AuthUser | null;
+}
+
+const UserModal = ({ isOpen, onClose, onSubmit, userForm, setUserForm, editingUser }: UserModalProps) => {
     if (!isOpen) return null;
     const { settings, isLoading } = useTheme();
-    const handleSubmit = (e: any) => {
+    const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         onSubmit();
     };
@@ -1078,10 +1125,19 @@ const UserModal = ({ isOpen, onClose, onSubmit, userForm, setUserForm, editingUs
 };
 
 // Email Modal Component
-const EmailModal = ({ isOpen, onClose, onSubmit, emailForm, setEmailForm, editingEmail }: any) => {
+interface EmailModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onSubmit: () => void;
+    emailForm: { name: string; main: string; email: string; app_password: string };
+    setEmailForm: (form: { name: string; main: string; email: string; app_password: string }) => void;
+    editingEmail: AuthEmail | null;
+}
+
+const EmailModal = ({ isOpen, onClose, onSubmit, emailForm, setEmailForm, editingEmail }: EmailModalProps) => {
     if (!isOpen) return null;
     const { settings, isLoading } = useTheme();
-    const handleSubmit = (e: any) => {
+    const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         onSubmit();
     };
@@ -1177,7 +1233,13 @@ const EmailModal = ({ isOpen, onClose, onSubmit, emailForm, setEmailForm, editin
 };
 
 // Delete Confirmation Modal Component
-const DeleteConfirmModal = ({ deleteConfirm, onClose, onConfirm }: any) => {
+interface DeleteConfirmModalProps {
+    deleteConfirm: { type: 'user' | 'email'; id: string; email: string } | null;
+    onClose: () => void;
+    onConfirm: () => void;
+}
+
+const DeleteConfirmModal = ({ deleteConfirm, onClose, onConfirm }: DeleteConfirmModalProps) => {
     if (!deleteConfirm) return null;
 
     return (

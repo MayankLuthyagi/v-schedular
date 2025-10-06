@@ -2,9 +2,12 @@
 import { google } from "googleapis";
 import { connectToDatabase } from "@/lib/db";
 import nodemailer from "nodemailer";
-import { ObjectId } from "mongodb";
+import { ObjectId, Db } from "mongodb";
 import { validateEmail } from "@/lib/emailValidation";
 import type { SiteSettings } from "@/types/settings";
+import type { Campaign, Attachment } from "@/types/campaign";
+import type { AuthEmail } from "@/types/auth";
+import type { EmailLog } from "@/types/emailLog";
 import "dotenv/config";
 
 // Enhanced error categorization
@@ -15,7 +18,7 @@ interface EmailError {
 }
 
 // Function to categorize email sending errors
-function categorizeEmailError(error: any): EmailError {
+function categorizeEmailError(error: Error & { code?: string; responseCode?: number }): EmailError {
     const errorMessage = error.message || error.toString();
     const errorCode = error.code;
     const responseCode = error.responseCode;
@@ -104,7 +107,7 @@ function categorizeEmailError(error: any): EmailError {
 }
 
 // Helper function to check if a feature is allowed from database settings
-async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAllowed']): Promise<boolean> {
+async function isFeatureAllowed(db: Db, feature: keyof SiteSettings['featureAllowed']): Promise<boolean> {
     try {
         const settings = await db.collection("Settings").findOne({});
         if (!settings || !settings.featureAllowed) {
@@ -125,7 +128,7 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
         console.log("✔️ Database connected.");
 
         const campaigns = await db
-            .collection("Campaigns")
+            .collection<Campaign>("Campaigns")
             .find({ isActive: true })
             .toArray();
         console.log(`🔎 Found ${campaigns.length} active campaigns.`);
@@ -135,7 +138,7 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
             process.exit(0);
         }
 
-        const allSenderEmails = await db.collection("AuthEmails").find({}).toArray();
+        const allSenderEmails = await db.collection<AuthEmail>("AuthEmails").find({}).toArray();
 
         // --- Google Sheets setup ---
         const oauth2Client = new google.auth.OAuth2(
@@ -156,7 +159,7 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
             const endDate = new Date(campaign.endDate);
             const isCorrectDay = campaign.sendDays.includes(dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1));
             const isWithinDateRange = startDate <= today && endDate >= today;
-            const isAlreadySentToday = campaign.todaySent === today.toDateString();
+            const isAlreadySentToday = campaign.todaySent?.toDateString() === today.toDateString();
 
             if (!isCorrectDay || !isWithinDateRange || isAlreadySentToday) {
                 console.log("  - 🟡 Skipping: Campaign schedule does not match.");
@@ -259,7 +262,7 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
 
                     if (recipientEmailsForBatch.length === 0) continue;
 
-                    const mailOptions: any = {
+                    const mailOptions: nodemailer.SendMailOptions = {
                         from: authEmail.name
                             ? `${authEmail.name} <${authEmail.email}>`
                             : authEmail.email,
@@ -274,7 +277,7 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
 
                     if (campaign.attachments?.length > 0) {
                         mailOptions.attachments = campaign.attachments.map(
-                            (attachment: any) => ({
+                            (attachment: Attachment) => ({
                                 filename: attachment.filename,
                                 content: Buffer.from(attachment.content, "base64"),
                                 contentType: attachment.contentType,
@@ -297,10 +300,11 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
                             }));
                             await db.collection("EmailLog").insertMany(successLogs);
                         }
-                    } catch (emailError: any) {
+                    } catch (emailError: unknown) {
+                        const error = emailError as Error;
                         console.error(
                             `❌ Failed batch from ${authEmail.email}:`,
-                            emailError.message
+                            error.message
                         );
                     }
                 } else {
@@ -343,7 +347,7 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
                             emailBodyToSend = `${campaign.emailBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/>`;
                         }
 
-                        const mailOptions: any = {
+                        const mailOptions: nodemailer.SendMailOptions = {
                             from: authEmail.name
                                 ? `${authEmail.name} <${authEmail.email}>`
                                 : authEmail.email,
@@ -355,7 +359,7 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
 
                         if (campaign.attachments?.length > 0) {
                             mailOptions.attachments = campaign.attachments.map(
-                                (attachment: any) => ({
+                                (attachment: Attachment) => ({
                                     filename: attachment.filename,
                                     content: Buffer.from(attachment.content, "base64"),
                                     contentType: attachment.contentType,
@@ -377,8 +381,9 @@ async function isFeatureAllowed(db: any, feature: keyof SiteSettings['featureAll
                                     sentAt: new Date(),
                                 });
                             }
-                        } catch (emailError: any) {
-                            const categorizedError = categorizeEmailError(emailError);
+                        } catch (emailError: unknown) {
+                            const error = emailError as Error & { code?: string; responseCode?: number };
+                            const categorizedError = categorizeEmailError(error);
                             console.log(`  - ❌ Failed to send to ${recipientEmail.trim()}: [${categorizedError.category.toUpperCase()}] ${categorizedError.reason}`);
                             if (await isFeatureAllowed(db, 'emailLogs')) {
                                 await db.collection("EmailLog").insertOne({

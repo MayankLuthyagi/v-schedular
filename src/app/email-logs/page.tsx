@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { HiArrowLeft, HiRefresh, HiEye, HiX, HiChevronLeft, HiChevronRight, HiExclamation } from "react-icons/hi";
+import { HiArrowLeft, HiRefresh, HiEye, HiX, HiChevronLeft, HiChevronRight } from "react-icons/hi";
 
 // --- Types (from your original code) ---
 interface EmailLog {
@@ -29,13 +29,13 @@ const useEmailLogs = () => {
     const [logs, setLogs] = useState<EmailLog[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    
+
     // State for filtering and pagination
     const [filter, setFilter] = useState<LogFilter>('today');
     const [searchTerm, setSearchTerm] = useState('');
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
-    
+
     const fetchLogs = useCallback(async (currentFilter: LogFilter, currentSearch: string, currentPage: number) => {
         setLoading(true);
         setError('');
@@ -60,8 +60,8 @@ const useEmailLogs = () => {
             } else {
                 throw new Error(data.error || 'Failed to fetch logs.');
             }
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'An error occurred');
             setLogs([]);
         } finally {
             setLoading(false);
@@ -77,7 +77,7 @@ const useEmailLogs = () => {
 
         return () => clearTimeout(handler);
     }, [filter, searchTerm, page, fetchLogs]);
-    
+
     const markAsBounced = async (log: EmailLog, reason: string) => {
         try {
             const response = await fetch('/api/bounce', {
@@ -89,8 +89,8 @@ const useEmailLogs = () => {
             if (!response.ok) throw new Error(data.error || 'API error');
             fetchLogs(filter, searchTerm, page); // Refresh logs on success
             return { success: true };
-        } catch (err: any) {
-            return { success: false, error: err.message };
+        } catch (err: unknown) {
+            return { success: false, error: err instanceof Error ? err.message : 'An error occurred' };
         }
     };
 
@@ -191,7 +191,7 @@ export default function EmailLogsPage() {
                                 </table>
                             )}
                         </div>
-                        
+
                         {/* Pagination */}
                         {totalPages > 1 && <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />}
                     </div>
@@ -207,7 +207,13 @@ export default function EmailLogsPage() {
 
 
 // --- Sub-components for UI ---
-const FilterButton = ({ active, onClick, children }: any) => (
+interface FilterButtonProps {
+    active: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+}
+
+const FilterButton = ({ active, onClick, children }: FilterButtonProps) => (
     <button
         onClick={onClick}
         className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${active ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}
@@ -226,7 +232,13 @@ const StatusBadge = ({ status }: { status: EmailLog['status'] }) => {
     return <span className={`px-2 py-1 text-xs font-medium rounded-full ${styles[status] || 'bg-gray-100'}`}>{status}</span>;
 };
 
-const Pagination = ({ currentPage, totalPages, onPageChange }: any) => (
+interface PaginationProps {
+    currentPage: number;
+    totalPages: number;
+    onPageChange: (page: number) => void;
+}
+
+const Pagination = ({ currentPage, totalPages, onPageChange }: PaginationProps) => (
     <div className="p-4 border-t flex items-center justify-between text-sm">
         <span>Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong></span>
         <div className="flex gap-2">
@@ -236,7 +248,13 @@ const Pagination = ({ currentPage, totalPages, onPageChange }: any) => (
     </div>
 );
 
-const DetailModal = ({ log, onClose, onMarkAsBounced }: any) => (
+interface DetailModalProps {
+    log: EmailLog;
+    onClose: () => void;
+    onMarkAsBounced: () => void;
+}
+
+const DetailModal = ({ log, onClose, onMarkAsBounced }: DetailModalProps) => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
         <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
             <div className="p-4 border-b flex justify-between items-center">
@@ -248,17 +266,17 @@ const DetailModal = ({ log, onClose, onMarkAsBounced }: any) => (
                     <span className="font-medium text-gray-600">Status</span>
                     <span className="col-span-2"><StatusBadge status={log.status} /></span>
                 </div>
-                 <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                     <span className="font-medium text-gray-600">Recipient</span>
                     <span className="col-span-2">{log.recipientEmail}</span>
                 </div>
                 {/* Add other details similarly */}
-                 <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                     <span className="font-medium text-gray-600">Sent At</span>
                     <span className="col-span-2">{new Date(log.sentAt).toLocaleString()}</span>
                 </div>
                 {log.failureReason && (
-                     <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-3 gap-4">
                         <span className="font-medium text-gray-600">Failure Reason</span>
                         <span className="col-span-2 text-red-600">{log.failureReason}</span>
                     </div>
@@ -275,7 +293,13 @@ const DetailModal = ({ log, onClose, onMarkAsBounced }: any) => (
     </div>
 );
 
-const BounceModal = ({ log, onClose, onConfirm }: any) => {
+interface BounceModalProps {
+    log: EmailLog;
+    onClose: () => void;
+    onConfirm: (log: EmailLog, reason: string) => Promise<{ success: boolean; error?: string }>;
+}
+
+const BounceModal = ({ log, onClose, onConfirm }: BounceModalProps) => {
     const [reason, setReason] = useState('');
     const [isSubmitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
@@ -291,7 +315,7 @@ const BounceModal = ({ log, onClose, onConfirm }: any) => {
         if (result.success) {
             onClose();
         } else {
-            setError(result.error);
+            setError(result.error || 'An error occurred');
         }
         setSubmitting(false);
     };
@@ -314,7 +338,7 @@ const BounceModal = ({ log, onClose, onConfirm }: any) => {
                     />
                     {error && <p className="text-sm text-red-600">{error}</p>}
                 </div>
-                 <div className="p-4 bg-gray-50 border-t flex justify-end gap-3">
+                <div className="p-4 bg-gray-50 border-t flex justify-end gap-3">
                     <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
                     <button onClick={handleSubmit} disabled={isSubmitting} className="px-4 py-2 bg-yellow-500 text-white rounded disabled:bg-yellow-300">
                         {isSubmitting ? 'Submitting...' : 'Confirm Bounce'}

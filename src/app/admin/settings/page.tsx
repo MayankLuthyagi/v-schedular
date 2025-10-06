@@ -91,7 +91,7 @@ export default function AdminSettingsPage() {
             setMessage(null);
         }
     };
-    
+
     const handleFeatureToggle = (feature: keyof typeof formData.featureAllowed) => {
         setFormData(prev => ({
             ...prev,
@@ -126,7 +126,7 @@ export default function AdminSettingsPage() {
             if (formData.logo) {
                 submitFormData.append('logo', formData.logo);
             }
-            
+
             // Append feature allowed data
             submitFormData.append('emailLogs', String(formData.featureAllowed.emailLogs));
             submitFormData.append('campaign', String(formData.featureAllowed.campaign));
@@ -185,8 +185,8 @@ export default function AdminSettingsPage() {
 
                     {message && (
                         <div className={`mb-6 p-4 rounded-md transition-theme ${message.type === 'success'
-                                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700'
-                                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700'
+                            ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700'
+                            : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700'
                             }`}>
                             {message.text}
                         </div>
@@ -202,8 +202,8 @@ export default function AdminSettingsPage() {
                                         Choose your site's primary color
                                     </label>
                                     <div className="flex items-center space-x-3">
-                                        <input type="color" id="themeColor" value={formData.themeColor} onChange={handleColorChange} className="w-8 h-8 rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer"/>
-                                        <input type="text" value={formData.themeColor} onChange={(e) => setFormData(prev => ({ ...prev, themeColor: e.target.value }))} className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:outline-none focus:ring-2 transition-theme" style={{ '--tw-ring-color': formData.themeColor } as any} placeholder="#3b82f6"/>
+                                        <input type="color" id="themeColor" value={formData.themeColor} onChange={handleColorChange} className="w-8 h-8 rounded-md border border-gray-300 dark:border-gray-600 cursor-pointer" />
+                                        <input type="text" value={formData.themeColor} onChange={(e) => setFormData(prev => ({ ...prev, themeColor: e.target.value }))} className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:outline-none focus:ring-2 transition-theme" style={{ '--tw-ring-color': formData.themeColor } as React.CSSProperties} placeholder="#3b82f6" />
                                     </div>
                                 </div>
                                 <div className="w-24 h-24 rounded-lg border-2 border-gray-200 dark:border-gray-700 flex items-center justify-center" style={{ backgroundColor: formData.themeColor }}>
@@ -211,7 +211,7 @@ export default function AdminSettingsPage() {
                                 </div>
                             </div>
                         </div>
-                        
+
                         {/* Feature Management Section */}
                         <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 transition-theme">
                             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Feature Management</h2>
@@ -221,7 +221,7 @@ export default function AdminSettingsPage() {
                                 <label htmlFor="emailLogs-toggle" className="flex items-center justify-between cursor-pointer">
                                     <span className="font-medium text-gray-700 dark:text-gray-200">Email Logs</span>
                                     <div className="relative">
-                                        <input id="emailLogs-toggle" type="checkbox" className="sr-only" checked={formData.featureAllowed.emailLogs} onChange={() => handleFeatureToggle('emailLogs')}/>
+                                        <input id="emailLogs-toggle" type="checkbox" className="sr-only" checked={formData.featureAllowed.emailLogs} onChange={() => handleFeatureToggle('emailLogs')} />
                                         <div className={`block w-14 h-8 rounded-full transition-colors ${formData.featureAllowed.emailLogs ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
                                         <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.featureAllowed.emailLogs ? 'transform translate-x-6' : ''}`}></div>
                                     </div>
@@ -229,8 +229,8 @@ export default function AdminSettingsPage() {
                                 {/* Campaign Toggle */}
                                 <label htmlFor="campaign-toggle" className="flex items-center justify-between cursor-pointer">
                                     <span className="font-medium text-gray-700 dark:text-gray-200">Campaign</span>
-                                     <div className="relative">
-                                        <input id="campaign-toggle" type="checkbox" className="sr-only" checked={formData.featureAllowed.campaign} onChange={() => handleFeatureToggle('campaign')}/>
+                                    <div className="relative">
+                                        <input id="campaign-toggle" type="checkbox" className="sr-only" checked={formData.featureAllowed.campaign} onChange={() => handleFeatureToggle('campaign')} />
                                         <div className={`block w-14 h-8 rounded-full transition-colors ${formData.featureAllowed.campaign ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
                                         <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.featureAllowed.campaign ? 'transform translate-x-6' : ''}`}></div>
                                     </div>
@@ -260,17 +260,17 @@ export default function AdminSettingsPage() {
                                     <label htmlFor="logo" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                                         Upload Main Logo (PNG only & 5MB max)
                                     </label>
-                                    <input type="file" id="logo" accept=".png" onChange={(e) => handleFileChange(e, 'logo')} className="block w-full text-sm text-gray-500 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                                    <input type="file" id="logo" accept=".png" onChange={(e) => handleFileChange(e, 'logo')} className="block w-full text-sm text-gray-500 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
                                 </div>
                                 <div className="flex items-center justify-center md:justify-end">
                                     {settings.logo ? (
                                         <div className="text-center">
-                                            <img src={`/uploads/${settings.logo}?t=${Date.now()}`} alt="Current Logo" className="max-w-full max-h-12 object-contain mx-auto mb-2"/>
+                                            <img src={`/uploads/${settings.logo}?t=${Date.now()}`} alt="Current Logo" className="max-w-full max-h-12 object-contain mx-auto mb-2" />
                                             <p className="text-xs text-gray-500 dark:text-gray-400">Current Logo</p>
                                         </div>
                                     ) : (
                                         <div className="w-24 h-24 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg flex items-center justify-center">
-                                            <FiUpload className="text-gray-400" size={24}/>
+                                            <FiUpload className="text-gray-400" size={24} />
                                         </div>
                                     )}
                                 </div>
@@ -278,19 +278,19 @@ export default function AdminSettingsPage() {
                         </div>
 
                         {/* Text Logo Section */}
-                         <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 transition-theme">
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 transition-theme">
                             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Text Logo</h2>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
                                 <div>
                                     <label htmlFor="textLogo" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                                         Upload Text Logo (PNG only & 5MB max)
                                     </label>
-                                    <input type="file" id="textLogo" accept=".png" onChange={(e) => handleFileChange(e, 'textLogo')} className="block w-full text-sm text-gray-500 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                                    <input type="file" id="textLogo" accept=".png" onChange={(e) => handleFileChange(e, 'textLogo')} className="block w-full text-sm text-gray-500 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
                                 </div>
                                 <div className="flex items-center justify-center md:justify-end">
                                     {settings.textLogo ? (
                                         <div className="text-center">
-                                            <img src={`/uploads/${settings.textLogo}?t=${Date.now()}`} alt="Current Text Logo" className="max-w-full max-h-12 object-contain mx-auto mb-2"/>
+                                            <img src={`/uploads/${settings.textLogo}?t=${Date.now()}`} alt="Current Text Logo" className="max-w-full max-h-12 object-contain mx-auto mb-2" />
                                             <p className="text-xs text-gray-500 dark:text-gray-400">Current Text Logo</p>
                                         </div>
                                     ) : (
