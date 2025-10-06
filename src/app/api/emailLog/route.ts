@@ -77,3 +77,26 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'An internal server error occurred.', details: (error as Error).message }, { status: 500 });
     }
 }
+
+export async function DELETE(request: NextRequest) {
+    try {
+        const { db } = await connectToDatabase();
+        const collection: Collection = db.collection('EmailLog');
+
+        // Delete all email logs
+        const result = await collection.deleteMany({});
+
+        return NextResponse.json({
+            success: true,
+            message: `Successfully deleted ${result.deletedCount} email logs`,
+            deletedCount: result.deletedCount
+        });
+
+    } catch (error: unknown) {
+        console.error('Error deleting email logs:', error);
+        return NextResponse.json({
+            error: 'Failed to delete email logs',
+            details: (error as Error).message
+        }, { status: 500 });
+    }
+}

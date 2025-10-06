@@ -153,10 +153,32 @@ const useEmailLogs = () => {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
             });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to delete all logs');
+
+            if (!response.ok) {
+                // Try to get error message from response
+                let errorMessage = 'Failed to delete all logs';
+                try {
+                    const data = await response.json();
+                    errorMessage = data.error || errorMessage;
+                } catch {
+                    // If JSON parsing fails, use default error message
+                    errorMessage = `Failed to delete all logs (${response.status})`;
+                }
+                throw new Error(errorMessage);
+            }
+
+            // Check if response has content before trying to parse JSON
+            const contentType = response.headers.get('content-type');
+            let data = {};
+            if (contentType && contentType.includes('application/json')) {
+                const text = await response.text();
+                if (text) {
+                    data = JSON.parse(text);
+                }
+            }
+
             fetchLogs(filter, searchTerm, page); // Refresh logs on success
-            return { success: true };
+            return { success: true, data };
         } catch (err: unknown) {
             return { success: false, error: err instanceof Error ? err.message : 'An error occurred' };
         }
@@ -177,7 +199,7 @@ export default function AdminDashboardPage() {
     const [users, setUsers] = useState<AuthUser[]>([]);
     const [emails, setEmails] = useState<AuthEmail[]>([]);
     const [loading, setLoading] = useState(true);
-    const [activeSection, setActiveSection] = useState<'email-logs' | 'users' | 'emails'>('email-logs');
+    const [activeSection, setActiveSection] = useState<'users' | 'emails'>('users');
     const { settings } = useTheme();
     const emailLogsAllowed = useFeatureAllowed('emailLogs');
     const { stats, isLoading: statsLoading } = useDashboardStats();
@@ -214,37 +236,25 @@ export default function AdminDashboardPage() {
     };
 
     const handleDeleteAllConfirm = async () => {
-        const result = await deleteAllLogs();
-        if (result.success) {
-            // You could add a notification here if you have one
-            console.log('All logs deleted successfully');
-        } else {
-            console.error('Failed to delete logs:', result.error);
+        try {
+            const result = await deleteAllLogs();
+            if (result.success) {
+                console.log('All logs deleted successfully');
+                // You could add a toast notification here if you have one
+                alert('All email logs have been deleted successfully!');
+            } else {
+                console.error('Failed to delete logs:', result.error);
+                alert(`Failed to delete logs: ${result.error}`);
+            }
+        } catch (error) {
+            console.error('Error during delete operation:', error);
+            alert('An unexpected error occurred while deleting logs');
+        } finally {
+            setDeleteAllModalOpen(false);
         }
-        setDeleteAllModalOpen(false);
     };
 
     // Function to scroll to email logs section
-    const scrollToEmailLogs = () => {
-        const emailLogsSection = document.getElementById('email-logs-section');
-        if (emailLogsSection) {
-            emailLogsSection.scrollIntoView({ behavior: 'smooth' });
-        }
-    };
-
-    // Handler for stat card clicks
-    const handleDeliveryClick = () => {
-        setActiveSection('email-logs');
-        setFilter('today');
-        setTimeout(scrollToEmailLogs, 100); // Small delay to ensure filter is set
-    };
-
-    const handleOpenRateClick = () => {
-        setActiveSection('email-logs');
-        setFilter('opened');
-        setTimeout(scrollToEmailLogs, 100); // Small delay to ensure filter is set
-    };
-
     // User management handlers
     const handleAddUser = () => {
         setEditingUser(null);
@@ -414,33 +424,7 @@ export default function AdminDashboardPage() {
                                 linkLabel="View Emails"
                             />
                         </div>
-                        {emailLogsAllowed && (
-                            <>
-                                {/* Today's Delivery Stat */}
-                                <AdminStatCard
-                                    title="Today's Delivery"
-                                    value={stats.sent}
-                                    total={stats.total}
-                                    percentage={stats.sentPercentage}
-                                    isLoading={statsLoading}
-                                    icon={<FiMail />}
-                                    onClick={handleDeliveryClick}
-                                    themeColor={settings.themeColor}
-                                />
-                                {/* Today's Open Rate Stat */}
-                                <AdminStatCard
-                                    title="Today's Open Rate"
-                                    value={stats.opened}
-                                    total={stats.sent}
-                                    percentage={stats.openRate}
-                                    isLoading={statsLoading}
-                                    note="(One-on-One)"
-                                    icon={<FiCheckCircle />}
-                                    onClick={handleOpenRateClick}
-                                    themeColor={settings.themeColor}
-                                />
-                            </>
-                        )}
+
                     </div>
 
                     {/* Section Navigation */}
@@ -448,17 +432,6 @@ export default function AdminDashboardPage() {
                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
                             <div className="border-b border-gray-200 dark:border-gray-700">
                                 <nav className="-mb-px flex">
-                                    {emailLogsAllowed && (
-                                        <button
-                                            onClick={() => setActiveSection('email-logs')}
-                                            className={`px-6 py-3 border-b-2 font-medium text-sm transition-colors cursor-pointer ${activeSection === 'email-logs'
-                                                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                                                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                                                }`}
-                                        >
-                                            Email Logs
-                                        </button>
-                                    )}
                                     <button
                                         onClick={() => setActiveSection('users')}
                                         className={`px-6 py-3 border-b-2 font-medium text-sm transition-colors cursor-pointer ${activeSection === 'users'
@@ -479,95 +452,6 @@ export default function AdminDashboardPage() {
                                     </button>
                                 </nav>
                             </div>
-
-                            {/* Email Logs Section */}
-                            {emailLogsAllowed && activeSection === 'email-logs' && (
-                                <>
-                                    {/* Header */}
-                                    <div className="border-b border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between">
-                                        <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100">Email Logs</h2>
-                                        <div className='flex gap-2'>
-                                            <button
-                                                onClick={refreshLogs}
-                                                className="flex items-center px-4 py-2 text-white rounded-lg hover:opacity-90 transition text-sm"
-                                                style={{ backgroundColor: settings.themeColor }}
-                                            >
-                                                <FiRefreshCw className="w-4 h-4 mr-2" />
-                                                Refresh
-                                            </button>
-                                            <button
-                                                onClick={handleOpenDeleteAllModal}
-                                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium text-sm whitespace-nowrap"
-                                            >
-                                                Delete All
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {/* Filters and Search */}
-                                    <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                                        <div className="flex flex-col md:flex-row gap-4">
-                                            <div className="flex-shrink-0 flex flex-wrap gap-2">
-                                                {['all', 'today', 'sent', 'failed', 'opened', 'bounced'].map(f => (
-                                                    <FilterButton key={f} active={filter === f} onClick={() => setFilter(f as LogFilter)} themeColor={settings.themeColor}>
-                                                        {f.charAt(0).toUpperCase() + f.slice(1)}
-                                                    </FilterButton>
-                                                ))}
-                                            </div>
-                                            <div className="flex gap-2 items-center">
-                                                <input
-                                                    type="text"
-                                                    placeholder="Search by recipient, sender, or campaign ID..."
-                                                    value={searchTerm}
-                                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                                    className="w-full md:max-w-xs px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-gray-600"
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Content Table */}
-                                    <div className="overflow-x-auto">
-                                        {logsLoading && <p className="text-center p-8 text-gray-600 dark:text-gray-400">Loading...</p>}
-                                        {logsError && <p className="text-center p-8 text-red-600">{logsError}</p>}
-                                        {!logsLoading && !logsError && logs.length === 0 && <p className="text-center p-8 text-gray-600 dark:text-gray-400">No logs found for this filter.</p>}
-                                        {!logsLoading && !logsError && logs.length > 0 && (
-                                            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                                                <thead className="bg-gray-50 dark:bg-gray-800">
-                                                    <tr>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Recipient</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Sender</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Sent At</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                                    {logs.map((log, index) => (
-                                                        <tr key={`${log.campaignId}-${log.recipientEmail}-${log.sentAt}-${index}`} >
-                                                            <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={log.status} /></td>
-                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{log.recipientEmail}</td>
-                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{log.senderEmail}</td>
-                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{new Date(log.sentAt).toLocaleString()}</td>
-                                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                                <button
-                                                                    onClick={() => setSelectedLog(log)}
-                                                                    className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300"
-                                                                >
-                                                                    <FiEye />
-                                                                </button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        )}
-                                    </div>
-
-                                    {/* Pagination */}
-                                    {totalPages > 1 && <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />}
-                                </>
-                            )}
 
                             {/* Users Section */}
                             {activeSection === 'users' && (
