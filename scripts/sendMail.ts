@@ -159,7 +159,9 @@ async function isFeatureAllowed(db: Db, feature: keyof SiteSettings['featureAllo
             const endDate = new Date(campaign.endDate);
             const isCorrectDay = campaign.sendDays.includes(dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1));
             const isWithinDateRange = startDate <= today && endDate >= today;
-            const isAlreadySentToday = campaign.todaySent?.toDateString() === today.toDateString();
+            const isAlreadySentToday = campaign.todaySent ?
+                (campaign.todaySent instanceof Date ? campaign.todaySent.toDateString() : new Date(campaign.todaySent).toDateString()) === today.toDateString() :
+                false;
 
             if (!isCorrectDay || !isWithinDateRange || isAlreadySentToday) {
                 console.log("  - 🟡 Skipping: Campaign schedule does not match.");

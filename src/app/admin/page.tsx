@@ -671,7 +671,7 @@ export default function AdminDashboardPage() {
                                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{email.main}</td>
                                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{email.email}</td>
                                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                                                                {email.app_password ? '••••••••' : 'Not set'}
+                                                                {email.app_password}
                                                             </td>
                                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                                                                 {email.createdAt ? new Date(email.createdAt).toLocaleString() : 'N/A'}

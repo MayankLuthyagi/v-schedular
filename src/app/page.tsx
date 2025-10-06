@@ -89,9 +89,9 @@ export default function InitialPage() {
                 <div className="hidden md:block bg-gray-800 relative">
                     {/* This part for displaying your image is fine */}
                     {settings.logo ? (
-                        <Image src={`/uploads/${settings.logo}?t=${Date.now()}`} alt="Campaign Illustration" fill className="object-contain" />
+                        <Image src={`/uploads/${settings.logo}?t=${Date.now()}`} alt="Campaign Illustration" fill className="object-fill" />
                     ) : (
-                        <Image src="/uploads/logo.png" alt="Campaign Illustration" fill className="object-contain" />
+                        <Image src="/uploads/logo.png" alt="Campaign Illustration" fill className="object-fill" />
                     )}
                 </div>
             </div>
