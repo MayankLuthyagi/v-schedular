@@ -16,11 +16,11 @@ export async function OPTIONS() {
 
 export async function GET(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
         const { db } = await connectToDatabase();
-        const { id } = params;
+        const { id } = await params;
 
         // Convert string ID to MongoDB ObjectId
         let objectId;
@@ -58,12 +58,12 @@ export async function GET(
 
 export async function PUT(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
         const body = await request.json();
         const { email, name } = body;
-        const { id } = params;
+        const { id } = await params;
 
         if (!email || !name) {
             const response = NextResponse.json(
@@ -140,11 +140,11 @@ export async function PUT(
 
 export async function DELETE(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
         const { db } = await connectToDatabase();
-        const { id } = params;
+        const { id } = await params;
 
         // Convert string ID to MongoDB ObjectId
         let objectId;
