@@ -2,14 +2,12 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { HiHome, HiLogout, HiUsers, HiOutlineMail, HiOutlineDocumentText, HiCog, HiMoon, HiSun } from "react-icons/hi";
-import { useTheme } from '@/contexts/ThemeContext';
+import { HiHome, HiLogout, HiCog } from "react-icons/hi";
 
 // NEW: Header component for the top bar
 const Header = () => {
     const [adminUsername, setAdminUsername] = useState('');
     const router = useRouter();
-    const { isDarkMode, toggleThemeMode } = useTheme();
 
     useEffect(() => {
         const adminData = localStorage.getItem('adminUser');

@@ -39,7 +39,7 @@ const colorVariants = {
 
 export default function StatCard({ title, value, icon, link, linkLabel, color }: StatCardProps) {
     const variants = colorVariants[color];
-    const { settings, isLoading } = useTheme();
+    const { settings } = useTheme();
     return (
         <div className={`${variants.bg} ${variants.border} border rounded-lg p-6 shadow-sm flex flex-col justify-between transition-colors`}>
             <div className="flex items-start justify-between">

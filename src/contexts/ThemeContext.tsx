@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { SiteSettings } from '@/types/settings';
 import { applyThemeColor } from '@/lib/theme';
 
@@ -24,7 +24,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     });
     const [isLoading, setIsLoading] = useState(true);
 
-    const fetchSettings = async () => {
+    const fetchSettings = useCallback(async () => {
         try {
             const response = await fetch('/api/settings');
             const data = await response.json();
@@ -48,7 +48,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, []);
 
     const applyThemeMode = (mode: 'light' | 'dark') => {
         // Ensure we're in the browser
@@ -120,7 +120,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
         // Then fetch settings from API
         fetchSettings();
-    }, []);
+    }, [fetchSettings]);
 
     const refreshSettings = async () => {
         await fetchSettings();
