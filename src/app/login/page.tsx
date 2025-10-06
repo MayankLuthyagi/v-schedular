@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
-import { signInWithPopup, signInWithRedirect, getRedirectResult, User, Auth, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, getRedirectResult, User } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -62,8 +62,9 @@ const useAuth = () => {
             await auth.signOut(); // Ensure clean login
             const result = await signInWithPopup(auth, googleProvider);
             await handleSuccessfulSignIn(result.user);
-        } catch (popupError: any) {
-            if (popupError.code === 'auth/popup-blocked' || popupError.code === 'auth/popup-closed-by-user') {
+        } catch (popupError: unknown) {
+            const error = popupError as { code?: string; message?: string };
+            if (error.code === 'auth/popup-blocked' || error.code === 'auth/popup-closed-by-user') {
                 console.log('Popup failed, falling back to redirect.');
                 await signInWithRedirect(auth, googleProvider);
             } else {

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useEffect, useState } from 'react';
 
@@ -27,17 +28,21 @@ export default function ThemeDemo() {
                     <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-4">
                             {settings.logo && (
-                                <img
+                                <Image
                                     src={`/uploads/${settings.logo}?t=${Date.now()}`}
                                     alt="Logo"
-                                    className="h-12 object-contain"
+                                    width={48}
+                                    height={48}
+                                    className="object-contain"
                                 />
                             )}
                             {settings.textLogo && (
-                                <img
+                                <Image
                                     src={`/uploads/${settings.textLogo}?t=${Date.now()}`}
                                     alt="Text Logo"
-                                    className="h-8 object-contain"
+                                    width={128}
+                                    height={32}
+                                    className="object-contain"
                                 />
                             )}
                             {!settings.logo && !settings.textLogo && (
