@@ -30,4 +30,4 @@ jobs:
         run: npm ci
 
       - name: Run sendMail script
-        run: npx ts-node scripts/sendMail.ts
+        run: npx tsx scripts/sendMail.ts
