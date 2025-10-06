@@ -9,7 +9,14 @@ on:
 jobs:
   send-mail:
     runs-on: ubuntu-latest
-
+    env:
+      # Load secrets into environment variables
+      MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+      REDIRECT_URI: ${{ secrets.REDIRECT_URI }}
+      REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
+      NODE_ENV: Cronjob
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
