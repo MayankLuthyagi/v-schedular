@@ -1,0 +1,26 @@
+name: Send Mail Scheduler (IST)
+
+on:
+  schedule:
+    # Every 30 minutes between 10 AM and 7 PM IST (4:30 AM–1:30 PM UTC)
+    - cron: "*/30 4-13 * * *"
+  workflow_dispatch: # allow manual run too
+
+jobs:
+  send-mail:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run sendMail script
+        run: npx ts-node scripts/sendMail.ts
