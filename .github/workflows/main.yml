@@ -1,0 +1,34 @@
+name: Send Mail Scheduler (IST)
+
+on:
+  schedule:
+    # Every 30 minutes between 10 AM and 7 PM IST (4:30 AM–1:30 PM UTC)
+    - cron: "*/30 4-13 * * *"
+  workflow_dispatch: # allow manual run too
+
+jobs:
+  send-mail:
+    runs-on: ubuntu-latest
+    environment: Cronjob   # <--- add this line
+    env:
+      # Load secrets into environment variables
+      MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+      REDIRECT_URI: ${{ secrets.REDIRECT_URI }}
+      REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
+      NODE_ENV: Cronjob
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run sendMail script
+        run: npx tsx scripts/sendMail.ts
