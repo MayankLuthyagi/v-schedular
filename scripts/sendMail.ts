@@ -153,8 +153,17 @@ async function isFeatureAllowed(db: Db, feature: keyof SiteSettings['featureAllo
 
         for (const campaign of campaigns) {
             console.log(`\nProcessing campaign: "${campaign.campaignName}" (ID: ${campaign.campaignId})`);
-            const today = new Date();
-            const dayOfWeek = today.toLocaleString("en-US", { weekday: "long" });
+
+            // Get current time in IST (UTC+5:30)
+            const nowUTC = new Date();
+            const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30 in milliseconds
+            const nowIST = new Date(nowUTC.getTime() + istOffset);
+
+            const today = nowIST;
+            // Get day of week using the IST-adjusted date (use UTC methods since we already shifted the time)
+            const dayOfWeek = nowIST.toLocaleString("en-US", { weekday: "long", timeZone: "UTC" });
+
+            console.log(`  - 📅 Current IST day: ${dayOfWeek}, Date: ${nowIST.toISOString().split('T')[0]}`);
 
             // --- Campaign schedule validation ---
             const startDate = new Date(campaign.startDate);
@@ -163,11 +172,11 @@ async function isFeatureAllowed(db: Db, feature: keyof SiteSettings['featureAllo
             const isWithinDateRange = startDate <= today && endDate >= today;
             let isAlreadySentToday = false;
             const campaignTodaySent = campaign.todaySent instanceof Date ? campaign.todaySent.toDateString() : new Date(campaign.todaySent).toDateString();
-            if(campaign.todaySent instanceof Date && campaignTodaySent===campaign.createdAt.toDateString()) isAlreadySentToday = false;
+            if (campaign.todaySent instanceof Date && campaignTodaySent === campaign.createdAt.toDateString()) isAlreadySentToday = false;
             else {
                 isAlreadySentToday = campaign.todaySent ?
-                (campaign.todaySent instanceof Date ? campaign.todaySent.toDateString() : new Date(campaign.todaySent).toDateString()) === today.toDateString() :
-                false;
+                    (campaign.todaySent instanceof Date ? campaign.todaySent.toDateString() : new Date(campaign.todaySent).toDateString()) === today.toDateString() :
+                    false;
             }
 
             if (!isCorrectDay || !isWithinDateRange || isAlreadySentToday) {
@@ -180,9 +189,14 @@ async function isFeatureAllowed(db: Db, feature: keyof SiteSettings['featureAllo
 
             if (campaign.sendTime) {
                 const [hours, minutes] = campaign.sendTime.split(":").map(Number);
-                const now = new Date();
-                if (now.getHours() < hours || (now.getHours() === hours && now.getMinutes() < minutes)) {
-                    console.log(`  - 🟡 Skipping: Current time is before the scheduled send time of ${campaign.sendTime}.`);
+                // Get current IST hours and minutes
+                const currentISTHours = nowIST.getUTCHours();
+                const currentISTMinutes = nowIST.getUTCMinutes();
+
+                console.log(`  - 🕐 Current IST time: ${currentISTHours}:${currentISTMinutes.toString().padStart(2, '0')}, Scheduled time: ${campaign.sendTime}`);
+
+                if (currentISTHours < hours || (currentISTHours === hours && currentISTMinutes < minutes)) {
+                    console.log(`  - 🟡 Skipping: Current IST time is before the scheduled send time of ${campaign.sendTime}.`);
                     continue;
                 }
             }
@@ -209,7 +223,7 @@ async function isFeatureAllowed(db: Db, feature: keyof SiteSettings['featureAllo
             }
             console.log(`  - ✔️ Found ${rows.length - 1} potential recipients in the sheet.`);
 
-            if(!campaign.randomSend) {
+            if (!campaign.randomSend) {
                 let globalRecipientIndex = 1;
                 for (const senderEmailAddress of campaign.commaId) {
                     const authEmail = allSenderEmails.find((e) => e.email === senderEmailAddress.trim());
