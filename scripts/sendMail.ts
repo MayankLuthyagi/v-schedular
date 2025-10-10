@@ -8,7 +8,6 @@ import type { SiteSettings } from "@/types/settings";
 import type { Campaign, Attachment } from "@/types/campaign";
 import type { AuthEmail } from "@/types/auth";
 import "dotenv/config";
-import { string } from "slate";
 
 // Enhanced error categorization
 interface EmailError {
