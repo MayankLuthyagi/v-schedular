@@ -99,6 +99,7 @@ const useDashboardStats = () => {
     const [stats, setStats] = useState({
         sent: 0,
         total: 0,
+        sentOpened: 0,
         opened: 0,
         sentPercentage: '0.00',
         openRate: '0.00'
@@ -126,6 +127,7 @@ const useDashboardStats = () => {
                 setStats({
                     sent,
                     total,
+                    sentOpened,
                     opened,
                     sentPercentage: total > 0 ? ((sent / total) * 100).toFixed(1) : '0.00',
                     openRate: sentOpened > 0 ? ((opened / sentOpened) * 100).toFixed(1) : '0.00'
@@ -594,7 +596,7 @@ export default function DashboardPage() {
                                                         <StatCard
                                                             title="Today's Opened Mail"
                                                             value={stats.opened}
-                                                            total={stats.sent}
+                                                            total={stats.sentOpened}
                                                             percentage={parseFloat(stats.openRate)}
                                                             isLoading={statsLoading}
                                                             note="(One-on-One)"
