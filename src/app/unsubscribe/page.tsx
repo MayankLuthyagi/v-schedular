@@ -9,10 +9,10 @@ export default function UnsubscribePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  
+
   // --- State for the reCAPTCHA token ---
   const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
-  
+
   const { settings, isLoading: themeLoading } = useTheme();
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -43,12 +43,17 @@ export default function UnsubscribePage() {
 
       setMessage(result.message);
       setEmail('');
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      // Narrow unknown to Error if possible, otherwise use a generic message
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError(String(err) || 'An unknown error occurred');
+      }
     } finally {
       setIsLoading(false);
       // Reset the token so the user has to solve it again
-      setRecaptchaToken(null); 
+      setRecaptchaToken(null);
     }
   };
 
@@ -58,7 +63,7 @@ export default function UnsubscribePage() {
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-800">Unsubscribe</h1>
           <p className="mt-2 text-gray-600">
-            We're sorry to see you go. Unsubscribe from our mailing list below.
+            We&apos;re sorry to see you go. Unsubscribe from our mailing list below.
           </p>
         </div>
 
@@ -76,20 +81,20 @@ export default function UnsubscribePage() {
               className="w-full px-3 py-2 text-gray-900 placeholder-gray-500 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
             />
           </div>
-          
+
           <button
             type="submit"
             disabled={isLoading || themeLoading}
             style={{ backgroundColor: settings.themeColor }}
             className={`w-full px-4 py-2 font-semibold text-white rounded-md transition-colors duration-200 bg-black
-              ${(isLoading || !recaptchaToken) 
-                ? 'cursor-not-allowed opacity-70' 
+              ${(isLoading || !recaptchaToken)
+                ? 'cursor-not-allowed opacity-70'
                 : 'focus:outline-none focus:ring-2 focus:ring-offset-2'
               }`}
           >
             {isLoading ? 'Processing...' : 'Unsubscribe'}
           </button>
-            {/* --- Google reCAPTCHA v2 Widget --- */}
+          {/* --- Google reCAPTCHA v2 Widget --- */}
           <div className="flex justify-center">
             <ReCAPTCHA
               sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY!}
@@ -100,16 +105,16 @@ export default function UnsubscribePage() {
         </form>
 
         <div className="text-center">
-            {message && (
-                <p className="p-3 mt-4 text-sm text-green-800 bg-green-100 border border-green-200 rounded-md">
-                    {message}
-                </p>
-            )}
-            {error && (
-                <p className="p-3 mt-4 text-sm text-red-800 bg-red-100 border border-red-200 rounded-md">
-                    {error}
-                </p>
-            )}
+          {message && (
+            <p className="p-3 mt-4 text-sm text-green-800 bg-green-100 border border-green-200 rounded-md">
+              {message}
+            </p>
+          )}
+          {error && (
+            <p className="p-3 mt-4 text-sm text-red-800 bg-red-100 border border-red-200 rounded-md">
+              {error}
+            </p>
+          )}
         </div>
       </div>
     </div>
