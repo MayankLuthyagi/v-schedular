@@ -693,7 +693,7 @@ export default function DashboardPage() {
                                                                     <tbody className="bg-white divide-y divide-gray-200">
                                                                         {logs.map((log, index) => (
                                                                             <tr key={`${log.campaignId}-${log.recipientEmail}-${log.sentAt}-${index}`}>
-                                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{(page - 1) * 10 + index + 1}</td>
+                                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{(page - 1) * 20 + index + 1}</td>
                                                                                 <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={log.status} /></td>
                                                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{log.recipientEmail}</td>
                                                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{log.senderEmail}</td>
