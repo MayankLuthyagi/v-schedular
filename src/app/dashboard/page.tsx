@@ -109,7 +109,7 @@ const useDashboardStats = () => {
         const fetchStats = async () => {
             setIsLoading(true);
             try {
-                const response = await fetch('/api/emailLog?status=today');
+                const response = await fetch('/api/emailLog?status=today&limit=5000');
                 if (!response.ok) return;
                 const data = await response.json();
                 const emailLogs: EmailLog[] = data.logs || [];
