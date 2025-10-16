@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
         // --- 1. Get All Query Parameters ---
         const status = searchParams.get('status');
         const search = searchParams.get('search');
+        const campaignId = searchParams.get('campaignId');
         const page = parseInt(searchParams.get('page') || '1', 10);
         const limit = parseInt(searchParams.get('limit') || '20', 10);
         const skip = (page - 1) * limit;
@@ -45,6 +46,12 @@ export async function GET(request: NextRequest) {
                 { senderEmail: { $regex: search, $options: 'i' } },
                 { campaignId: { $regex: search, $options: 'i' } },
             ];
+        }
+
+        // Handle campaignId exact filter
+        if (campaignId) {
+            // If campaignId provided, match exact campaignId
+            query.campaignId = campaignId;
         }
 
         // --- 3. Execute Database Queries ---

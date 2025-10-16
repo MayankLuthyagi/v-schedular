@@ -158,10 +158,12 @@ const useEmailLogs = () => {
     // State for filtering and pagination
     const [filter, setFilter] = useState<LogFilter>('today');
     const [searchTerm, setSearchTerm] = useState('');
+    // Campaign filter (empty = all)
+    const [campaignFilter, setCampaignFilter] = useState<string>('');
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
 
-    const fetchLogs = useCallback(async (currentFilter: LogFilter, currentSearch: string, currentPage: number) => {
+    const fetchLogs = useCallback(async (currentFilter: LogFilter, currentSearch: string, currentPage: number, currentCampaign?: string) => {
         setLoading(true);
         setError('');
         try {
@@ -172,6 +174,9 @@ const useEmailLogs = () => {
             }
             if (currentSearch) {
                 params.append('search', currentSearch);
+            }
+            if (currentCampaign) {
+                params.append('campaignId', currentCampaign);
             }
             params.append('page', String(currentPage));
             params.append('limit', '20'); // Example: 20 logs per page
@@ -195,13 +200,13 @@ const useEmailLogs = () => {
 
     // Effect to refetch when filters change
     useEffect(() => {
-        // Debounce search term to avoid excessive API calls
+        // Debounce search term and campaign selection to avoid excessive API calls
         const handler = setTimeout(() => {
-            fetchLogs(filter, searchTerm, page);
+            fetchLogs(filter, searchTerm, page, campaignFilter);
         }, 300); // 300ms delay
 
         return () => clearTimeout(handler);
-    }, [filter, searchTerm, page, fetchLogs]);
+    }, [filter, searchTerm, page, campaignFilter, fetchLogs]);
 
     const deleteAllLogs = async () => {
         try {
@@ -211,7 +216,7 @@ const useEmailLogs = () => {
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to delete all logs');
-            fetchLogs(filter, searchTerm, page); // Refresh logs on success
+            fetchLogs(filter, searchTerm, page, campaignFilter); // Refresh logs on success (respect campaign filter)
             return { success: true };
         } catch (err: unknown) {
             return { success: false, error: err instanceof Error ? err.message : 'An error occurred' };
@@ -222,8 +227,9 @@ const useEmailLogs = () => {
         logs, loading, error,
         filter, setFilter,
         searchTerm, setSearchTerm,
+        campaignFilter, setCampaignFilter,
         page, setPage, totalPages,
-        refresh: () => fetchLogs(filter, searchTerm, page),
+        refresh: () => fetchLogs(filter, searchTerm, page, campaignFilter),
         deleteAllLogs,
     };
 };
@@ -283,7 +289,7 @@ export default function DashboardPage() {
     // Using our custom hooks
     const { campaigns, isLoading: campaignsLoading, addOrUpdateCampaign, deleteCampaign } = useCampaigns();
     const { stats, isLoading: statsLoading } = useDashboardStats();
-    const { logs, loading: logsLoading, error: logsError, filter, setFilter, searchTerm, setSearchTerm, page, setPage, totalPages, refresh: refreshLogs, deleteAllLogs } = useEmailLogs();
+    const { logs, loading: logsLoading, error: logsError, filter, setFilter, searchTerm, setSearchTerm, campaignFilter, setCampaignFilter, page, setPage, totalPages, refresh: refreshLogs, deleteAllLogs } = useEmailLogs();
 
     if (themeLoading) {
         return (
@@ -641,7 +647,19 @@ export default function DashboardPage() {
                                                                         </FilterButton>
                                                                     ))}
                                                                 </div>
-                                                                <div className="flex gap-2 items-center">
+
+                                                                <div className="flex gap-4 items-center">
+                                                                    <select
+                                                                        value={campaignFilter}
+                                                                        onChange={(e) => setCampaignFilter(e.target.value)}
+                                                                        className="px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-600 text-sm"
+                                                                    >
+                                                                        <option value="">All campaigns</option>
+                                                                        {campaigns.map(c => (
+                                                                            <option key={c.campaignId} value={c.campaignId}>{c.campaignName}</option>
+                                                                        ))}
+                                                                    </select>
+
                                                                     <input
                                                                         type="text"
                                                                         placeholder="Search by recipient, sender, or campaign ID..."
@@ -664,6 +682,7 @@ export default function DashboardPage() {
                                                                 <table className="min-w-full divide-y divide-gray-200">
                                                                     <thead className="bg-gray-50">
                                                                         <tr>
+                                                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">No.</th>
                                                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                                                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Recipient</th>
                                                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sender</th>
@@ -674,6 +693,7 @@ export default function DashboardPage() {
                                                                     <tbody className="bg-white divide-y divide-gray-200">
                                                                         {logs.map((log, index) => (
                                                                             <tr key={`${log.campaignId}-${log.recipientEmail}-${log.sentAt}-${index}`}>
+                                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{(page - 1) * 10 + index + 1}</td>
                                                                                 <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={log.status} /></td>
                                                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{log.recipientEmail}</td>
                                                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{log.senderEmail}</td>
