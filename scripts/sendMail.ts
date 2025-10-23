@@ -138,7 +138,7 @@ function sleep(ms: number) {
 // send with retries and exponential backoff for transient errors
 async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 3) {
     let attempt = 0;
-    const baseDelay = 1000; // 1s base
+    const baseDelay = 5000; // 5s base
     while (true) {
         try {
             const info = await transporter.sendMail(mailOptions);
@@ -295,7 +295,7 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                     if (campaign.sendMethod === "bcc" || campaign.sendMethod === "cc") {
                         // Batch sending logic for BCC/CC
                         
-                        const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 50;
+                        const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
                         const BATCH_DELAY_MS = Number(process.env.BCC_BATCH_DELAY_MS) || 60000;
 
                         const startOfDay = new Date();
@@ -644,7 +644,7 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                     if (campaign.sendMethod === "bcc" || campaign.sendMethod === "cc") {
                         // Batch sending logic for BCC/CC (RANDOM)
                         
-                        const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 50;
+                        const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
                         const BATCH_DELAY_MS = Number(process.env.BCC_BATCH_DELAY_MS) || 60000;
 
                         const startOfDay = new Date();
