@@ -121,7 +121,27 @@ export async function POST(request: Request) {
 
             if (!verificationData.success) {
                 console.warn('reCAPTCHA v2 verification failed:', verificationData);
-                return NextResponse.json({ error: 'Bot behavior detected. Please try again.' }, { status: 400 });
+                const errorCodes: string[] = Array.isArray(verificationData['error-codes'])
+                    ? verificationData['error-codes']
+                    : [];
+
+                const codeToMessage: Record<string, string> = {
+                    'missing-input-secret': 'Server captcha secret is missing.',
+                    'invalid-input-secret': 'Server captcha secret is invalid.',
+                    'missing-input-response': 'Captcha response token is missing.',
+                    'invalid-input-response': 'Captcha response token is invalid or expired. Please try again.',
+                    'timeout-or-duplicate': 'Captcha expired or already used. Please verify again.',
+                    'bad-request': 'Invalid captcha verification request.',
+                };
+
+                const mappedMessage = errorCodes
+                    .map((code) => codeToMessage[code])
+                    .find(Boolean);
+
+                return NextResponse.json(
+                    { error: mappedMessage || 'Bot behavior detected. Please try again.' },
+                    { status: 400 }
+                );
             }
         }
 
