@@ -8,9 +8,9 @@ export interface Attachment {
 export interface Campaign {
     campaignId: string;
     campaignName: string;
-    emailSubject: string;
-    emailBody: string;
-    commaId: string[]; // Array of selected email addresses
+    templateId: string;
+    audienceId?: string;
+    senderEmails: string[];
     startDate: string;
     endDate: string;
     sendTime: string;
@@ -19,20 +19,19 @@ export interface Campaign {
     sendMethod: 'one-on-one' | 'cc' | 'bcc';
     toEmail: string;
     replyToEmail: string;
-    sheetId: string;
-    attachments: Attachment[]; // Store attachments directly in MongoDB
+    attachments: Attachment[];
     isActive: boolean;
     randomSend: boolean;
-    todaySent: Date;
+    todaySent: Date | string | null;
     createdAt: Date;
     updatedAt: Date;
 }
 
 export interface CampaignFormData {
     campaignName: string;
-    emailSubject: string;
-    emailBody: string;
-    commaId: string[];
+    templateId: string;
+    audienceId?: string;
+    senderEmails: string[];
     startDate: string;
     endDate: string;
     sendTime: string;
@@ -41,7 +40,6 @@ export interface CampaignFormData {
     sendMethod: 'one-on-one' | 'cc' | 'bcc';
     toEmail: string;
     replyToEmail: string;
-    sheetId: string;
     attachment?: File | null;
     attachmentNote?: string;
     isActive: boolean;

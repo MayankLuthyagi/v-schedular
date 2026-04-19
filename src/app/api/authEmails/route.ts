@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/db';
+import { encrypt } from '@/lib/crypto';
 
 export async function GET() {
     try {
         const { db } = await connectToDatabase();
         const emails = await db.collection('AuthEmails').find({}).toArray();
 
-        return NextResponse.json({ success: true, emails });
+        // Never expose app_password to the client
+        const safeEmails = emails.map(({ app_password: _removed, ...rest }) => rest);
+
+        return NextResponse.json({ success: true, emails: safeEmails });
     } catch (error) {
         console.error('Error fetching emails:', error);
         return NextResponse.json(
@@ -45,21 +49,24 @@ export async function POST(request: NextRequest) {
             name,
             main,
             email,
-            app_password,
+            app_password: encrypt(app_password), // stored encrypted
             createdAt: new Date(),
             updatedAt: new Date(),
         };
 
         const result = await db.collection('AuthEmails').insertOne(newEmail);
 
+        // Return the record without the encrypted password
+        const { app_password: _removed, ...safeEmail } = newEmail;
         return NextResponse.json({
             success: true,
-            email: { ...newEmail, _id: result.insertedId }
+            email: { ...safeEmail, _id: result.insertedId }
         });
     } catch (error) {
-        console.error('Error creating authorized email:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('Error creating authorized email:', message);
         return NextResponse.json(
-            { success: false, error: 'Failed to create authorized email' },
+            { success: false, error: message },
             { status: 500 }
         );
     }

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "send:mail": "ts-node scripts/sendMail.ts"
+    "send:mail": "dotenv -e .env.local -- tsx scripts/sendMail.ts",
+    "seed:admin": "dotenv -e .env.local -- tsx scripts/seedAdminCredentials.ts"
   },
   "dependencies": {
     "@next/bundle-analyzer": "^15.5.7",
@@ -15,9 +16,10 @@
     "@vercel/analytics": "^1.5.0",
     "@vercel/speed-insights": "^1.2.0",
     "axios": "^1.12.2",
+    "bcryptjs": "^2.4.3",
     "dotenv": "^17.2.3",
     "firebase": "^12.3.0",
-    "googleapis": "^161.0.0",
+    "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.20.0",
     "next": "15.5.7",
     "nodemailer": "^7.0.6",
@@ -30,20 +32,26 @@
     "slate": "^0.118.1",
     "slate-history": "^0.113.1",
     "slate-react": "^0.117.4",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.2",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@types/react-google-recaptcha": "^2.1.9",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9",
     "eslint-config-next": "15.5.7",
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

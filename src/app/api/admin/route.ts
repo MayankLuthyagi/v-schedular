@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/db';
+import bcrypt from 'bcryptjs';
 
 export async function POST(request: NextRequest) {
     try {
@@ -13,6 +14,7 @@ export async function POST(request: NextRequest) {
         }
 
         const { db } = await connectToDatabase();
+        const hashedPassword = await bcrypt.hash(password, 12);
 
         // Check if admin already exists
         const existingAdmin = await db.collection('Admin').findOne({ username });
@@ -25,7 +27,7 @@ export async function POST(request: NextRequest) {
 
         const newAdmin = {
             username,
-            password,
+            password: hashedPassword,
             email: email || null,
             role: 'admin',
             createdAt: new Date(),

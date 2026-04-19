@@ -1,13 +1,74 @@
 // scripts/sendMail.ts
-import { google } from "googleapis";
 import { connectToDatabase } from "@/lib/db";
 import nodemailer from "nodemailer";
 import { ObjectId, Db } from "mongodb";
 import { validateEmail } from "@/lib/emailValidation";
+import { decrypt, isEncrypted } from "@/lib/crypto";
+
+/** Safely decrypt an app password — falls back to plain text if not encrypted yet */
+function safeDecrypt(value: string): string {
+    if (!value) return value;
+    return isEncrypted(value) ? decrypt(value) : value;
+}
 import type { SiteSettings } from "@/types/settings";
 import type { Campaign, Attachment } from "@/types/campaign";
 import type { AuthEmail } from "@/types/auth";
+import type { Broadcast } from "@/types/broadcast";
+import type { DateAutomation } from "@/types/dateAutomation";
+import type { AudienceContact } from "@/types/audience";
 import "dotenv/config";
+
+// --- Template helpers --------------------------------------------------------
+
+interface ResolvedTemplate { subject: string; body: string; }
+
+/** Look up an email template by templateId and return its subject + body */
+async function resolveTemplate(db: Db, templateId: string): Promise<ResolvedTemplate | null> {
+    if (!templateId) return null;
+    const tpl = await db.collection("EmailTemplates").findOne({ templateId });
+    if (!tpl) return null;
+    return { subject: tpl.subject as string, body: tpl.body as string };
+}
+
+// --- Audience helpers --------------------------------------------------------
+
+/** Load all contacts for a given audienceId */
+async function loadAudienceContacts(db: Db, audienceId: string): Promise<AudienceContact[]> {
+    const audience = await db.collection("Audiences").findOne({ audienceId });
+    return (audience?.contacts as AudienceContact[]) || [];
+}
+
+/**
+ * Replace {{field_name}} placeholders in text with values from a contact object.
+ * Falls back to empty string for missing fields.
+ */
+function applyVariables(text: string, contact: AudienceContact): string {
+    return text.replace(/\{\{([^}]+)\}\}/g, (_, key) => {
+        const trimmed = key.trim().toLowerCase().replace(/\s+/g, '_');
+        return contact[trimmed] ?? contact[key.trim()] ?? '';
+    });
+}
+
+/** Get today's date string in IST (YYYY-MM-DD) */
+function getTodayIST(): string {
+    const now = new Date();
+    const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+    return ist.toISOString().split('T')[0];
+}
+
+/** Get current IST hours + minutes */
+function getCurrentISTTime(): { hours: number; minutes: number } {
+    const now = new Date();
+    const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+    return { hours: ist.getUTCHours(), minutes: ist.getUTCMinutes() };
+}
+
+/** Return true if current IST time >= HH:mm */
+function timeHasPassed(sendTime: string): boolean {
+    const [h, m] = sendTime.split(':').map(Number);
+    const { hours, minutes } = getCurrentISTTime();
+    return hours > h || (hours === h && minutes >= m);
+}
 
 // Enhanced error categorization
 interface EmailError {
@@ -182,47 +243,36 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
 
         const allSenderEmails = await db.collection<AuthEmail>("AuthEmails").find({}).toArray();
 
-        // --- Google Sheets setup ---
-        const oauth2Client = new google.auth.OAuth2(
-            process.env.CLIENT_ID,
-            process.env.CLIENT_SECRET,
-            process.env.REDIRECT_URI
-        );
-        oauth2Client.setCredentials({ refresh_token: process.env.REFRESH_TOKEN });
-        const sheets = google.sheets({ version: "v4", auth: oauth2Client });
 
         for (const campaign of campaigns) {
             console.log(`\nProcessing campaign: "${campaign.campaignName}" (ID: ${campaign.campaignId})`);
 
-            // Get current time in IST (UTC+5:30)
-            const nowUTC = new Date();
-            const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30 in milliseconds
-            const nowIST = new Date(nowUTC.getTime() + istOffset);
-
-            const today = nowIST;
-            // Get day of week using the IST-adjusted date (use UTC methods since we already shifted the time)
+            // Derive IST "today" using UTC methods on the shifted timestamp.
+            // IMPORTANT: we must use getUTC* methods on nowIST because getDate()/getMonth()
+            // etc. use the machine's local timezone, which would double-count the IST offset
+            // and push the date one day forward on IST machines.
+            const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+            const todayISTStr = nowIST.toISOString().split('T')[0]; // "YYYY-MM-DD"
             const dayOfWeek = nowIST.toLocaleString("en-US", { weekday: "long", timeZone: "UTC" });
 
-            console.log(`Current IST day: ${dayOfWeek}, Date: ${nowIST.toISOString().split('T')[0]}`);
+            console.log(`Current IST day: ${dayOfWeek}, Date: ${todayISTStr}`);
 
             // --- Campaign schedule validation ---
-            const startDate = new Date(campaign.startDate);
-            const endDate = new Date(campaign.endDate);
-            // Compare dates only (without time component)
-            const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-            const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-            const endDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+            // Compare date-only strings (YYYY-MM-DD) to avoid any timezone confusion.
+            const startDateStr = campaign.startDate.slice(0, 10);
+            const endDateStr = campaign.endDate.slice(0, 10);
 
             const isCorrectDay = campaign.sendDays.includes(dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1));
-            const isWithinDateRange = startDateOnly <= todayDateOnly && endDateOnly >= todayDateOnly;
-            let isAlreadySentToday = false;
-            const campaignTodaySent = campaign.todaySent instanceof Date ? campaign.todaySent.toDateString() : new Date(campaign.todaySent).toDateString();
-            if (campaign.todaySent instanceof Date && campaignTodaySent === campaign.createdAt.toDateString()) isAlreadySentToday = false;
-            else {
-                isAlreadySentToday = campaign.todaySent ?
-                    (campaign.todaySent instanceof Date ? campaign.todaySent.toDateString() : new Date(campaign.todaySent).toDateString()) === today.toDateString() :
-                    false;
+            const isWithinDateRange = startDateStr <= todayISTStr && endDateStr >= todayISTStr;
+
+            // Normalise stored todaySent to a YYYY-MM-DD string for comparison.
+            function toISTDateStr(val: Date | string | null | undefined): string | null {
+                if (!val) return null;
+                const d = val instanceof Date ? val : new Date(String(val));
+                if (isNaN(d.getTime())) return null;
+                return new Date(d.getTime() + 5.5 * 60 * 60 * 1000).toISOString().split('T')[0];
             }
+            const isAlreadySentToday = toISTDateStr(campaign.todaySent as Date | string | null) === todayISTStr;
 
             if (!isCorrectDay || !isWithinDateRange || isAlreadySentToday) {
                 console.log("Skipping: Campaign schedule does not match.");
@@ -247,33 +297,33 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
             }
             console.log("Schedule and time validation passed.");
 
-            // --- Fetch recipients from Google Sheet ---
-            let rows;
-            try {
-                const sheetName = dayOfWeek.charAt(0).toUpperCase() + dayOfWeek.slice(1);
-                console.log(`Fetching data from Google Sheet "${sheetName}"...`);
-                const response = await sheets.spreadsheets.values.get({
-                    spreadsheetId: campaign.sheetId,
-                    range: sheetName,
-                });
-                rows = response.data.values;
-            } catch (error) {
-                console.error(`Failed to fetch Google Sheet: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                continue;
-            }
+            // ---------------------------------------------------------------
+            // RECIPIENT SOURCE: MongoDB Audience (preferred) OR Google Sheet (legacy)
+            // ---------------------------------------------------------------
 
-            if (!rows || rows.length < 2) {
-                console.log("Skipping: No recipient data found in the Google Sheet for today.");
-                continue;
-            }
-            console.log(`Found ${rows.length - 1} potential recipients in the sheet.`);
-
-            // Get Base URL for unsubscribe links/pixels
             const baseUrl = (process.env.TRACKING_PIXEL_BASE_URL || process.env.NEXT_PUBLIC_BASE_URL || 'https://schedular-plum.vercel.app').replace(/\/$/, '');
 
-            if (!campaign.randomSend) {
-                let globalRecipientIndex = 1;
-                for (const senderEmailAddress of campaign.commaId) {
+            if ((campaign as any).audienceId) {
+                // ── NEW PATH: MongoDB Audience ────────────────────────────────
+                const templateId = (campaign as any).templateId as string;
+                const tpl = await resolveTemplate(db, templateId);
+                if (!tpl) {
+                    console.log(`Campaign "${campaign.campaignName}" has no valid templateId "${templateId}". Skipping.`);
+                    continue;
+                }
+                console.log(`Using MongoDB audience "${(campaign as any).audienceId}" for campaign.`);
+                const contacts = await loadAudienceContacts(db, (campaign as any).audienceId);
+                if (contacts.length === 0) {
+                    console.log(`Audience empty or not found. Skipping campaign.`);
+                    continue;
+                }
+                console.log(`Audience loaded: ${contacts.length} contacts.`);
+
+                const orderedContacts = campaign.randomSend
+                    ? [...contacts].sort(() => Math.random() - 0.5)
+                    : contacts;
+
+                for (const senderEmailAddress of (campaign.senderEmails || (campaign as any).commaId || [])) {
                     const authEmail = allSenderEmails.find((e) => e.email === senderEmailAddress.trim());
                     if (!authEmail) {
                         console.log(`Skipping sender ${senderEmailAddress}: Not found in AuthEmails.`);
@@ -282,331 +332,113 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                     console.log(`Preparing to send from: ${authEmail.email}`);
 
                     const transporter = nodemailer.createTransport({
-                        host: "smtp.gmail.com",
-                        port: 587,
-                        secure: false,
-                        auth: {
-                            user: authEmail.email ?? authEmail.main,
-                            pass: authEmail.app_password,
-                        },
+                        host: "smtp.gmail.com", port: 587, secure: false,
+                        auth: { user: authEmail.email ?? authEmail.main, pass: safeDecrypt(authEmail.app_password) },
                     });
 
-                    // --- Send logic ---
-                    if (campaign.sendMethod === "bcc" || campaign.sendMethod === "cc") {
-                        // Batch sending logic for BCC/CC
-                        
-                        const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
-                        const BATCH_DELAY_MS = Number(process.env.BCC_BATCH_DELAY_MS) || 60000;
+                    const startOfDay = new Date();
+                    startOfDay.setHours(0, 0, 0, 0);
+                    const sentTodayForThisCampaign = await db.collection("EmailLog").countDocuments({
+                        senderEmail: authEmail.email,
+                        campaignId: campaign.campaignId,
+                        sentAt: { $gte: startOfDay },
+                        status: 'sent',
+                    });
+                    let remaining = Math.max(0, campaign.dailySendLimitPerSender - sentTodayForThisCampaign);
+                    if (remaining === 0) {
+                        console.log(`Sender ${authEmail.email} already hit daily limit for this campaign.`);
+                        continue;
+                    }
 
-                        const startOfDay = new Date();
-                        startOfDay.setHours(0, 0, 0, 0);
-                        // Count emails sent today BY THIS SENDER and FOR THIS CAMPAIGN
-                        const sentTodayForThisCampaign = await db.collection("EmailLog").countDocuments({
-                            senderEmail: authEmail.email,
-                            campaignId: campaign.campaignId, // <-- The crucial addition
-                            sentAt: { $gte: startOfDay },
-                            status: 'sent'
-                        });
-
-                        // Calculate how many more emails this sender needs to send for this campaign today
-                        let remainingForSender = Math.max(0, campaign.dailySendLimitPerSender - sentTodayForThisCampaign);
-
-                        if (remainingForSender === 0) {
-                            console.log(`Sender ${authEmail.email} has already met its goal of ${campaign.dailySendLimitPerSender} sends for campaign "${campaign.campaignName}" today.`);
-                            continue; // Move to the next sender
-                        }
-                        
-                        // The existing in-body link logic for BCC/CC is removed here based on the new requirement.
-                        // However, we MUST include the List-Unsubscribe header for BCC/CC as requested in the final instruction.
-                        
-                        while (remainingForSender > 0 && globalRecipientIndex < rows.length) {
-                            const recipientEmailsForBatch: string[] = [];
-                            const invalidEmails: { email: string; reason: string }[] = [];
-                            let i = 0;
-
-                            const allowedBatch = Math.min(remainingForSender, ENV_MAX);
-
-                            while (
-                                globalRecipientIndex < rows.length &&
-                                i < allowedBatch
-                            ) {
-                                const recipientEmail = rows[globalRecipientIndex]?.[0];
-                                globalRecipientIndex++;
-                                if (!recipientEmail?.trim()) continue;
-
-                                // --- Unsubscribe Check ---
-                                const trimmedEmail = recipientEmail.trim();
-                                if (await isUnsubscribed(db, trimmedEmail)) {
-                                    console.log(`Skipping unsubscribed email ${trimmedEmail}.`);
-                                    continue;
+                    if (campaign.sendMethod === 'one-on-one') {
+                        let idx = 0;
+                        while (idx < orderedContacts.length && remaining > 0) {
+                            const contact = orderedContacts[idx++];
+                            if (!contact.email?.trim()) continue;
+                            if (await isUnsubscribed(db, contact.email.trim())) { console.log(`Skipping unsubscribed ${contact.email}`); continue; }
+                            const validation = await validateEmail(contact.email.trim());
+                            if (!validation.isValid) {
+                                console.log(`Skipping invalid ${contact.email}: ${validation.reason}`);
+                                if (await isFeatureAllowed(db, 'emailLogs')) {
+                                    await db.collection("EmailLog").insertOne({ status: 'failed', failureReason: `Validation: ${validation.reason}`, failureCategory: 'validation', originalError: validation.reason, campaignId: campaign.campaignId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: campaign.sendMethod, sentAt: new Date() });
                                 }
-                                // -----------------------------
-
-                                // Validate email before adding to batch
-                                const validation = await validateEmail(trimmedEmail);
-                                if (validation.isValid) {
-                                    recipientEmailsForBatch.push(trimmedEmail);
-                                    i++;
-                                } else {
-                                    console.log(`Skipping invalid email ${recipientEmail}: ${validation.reason}`);
-                                    invalidEmails.push({ email: trimmedEmail, reason: validation.reason || 'Invalid email' });
-                                }
+                                continue;
                             }
-
-                            // Log invalid emails
-                            if (await isFeatureAllowed(db, 'emailLogs') && invalidEmails.length > 0) {
-                                const invalidLogs = invalidEmails.map((invalid) => ({
-                                    campaignId: campaign.campaignId,
-                                    recipientEmail: invalid.email,
-                                    senderEmail: authEmail.email,
-                                    sendMethod: campaign.sendMethod,
-                                    status: "failed",
-                                    failureReason: `Validation failed: ${invalid.reason}`,
-                                    failureCategory: 'validation',
-                                    originalError: invalid.reason,
-                                    sentAt: new Date(),
-                                }));
-                                await db.collection("EmailLog").insertMany(invalidLogs);
-                            }
-
-                            if (recipientEmailsForBatch.length === 0) {
-                                break;
-                            }
-                            let emailBodyToSend = campaign.emailBody;
-                            const unsubscribeHtml = `
-                                <div style="text-align:center; margin-top: 30px;">
-                                    <p style="
-                                    font-size: 12px;
-                                    color: #6c757d;
-                                    margin: 0;
-                                    ">
-                                    If you no longer wish to receive these emails, 
-                                    <a href="${baseUrl}/unsubscribe" target="_blank" style="
-                                        color: #6c757d;
-                                        text-decoration: underline;
-                                    ">
-                                        click here to unsubscribe
-                                    </a>.
-                                    </p>
-                                </div>
-                            `;
-                            emailBodyToSend += unsubscribeHtml;
-                            const unsubscribeUrl = `${baseUrl}/unsubscribe`;
+                            remaining--;
+                            const personalBody = applyVariables(tpl.body, contact);
+                            const personalSubject = applyVariables(tpl.subject, contact);
+                            const logId = new ObjectId();
+                            const trackingPixelUrl = `${baseUrl}/api/track?logId=${logId.toHexString()}`;
+                            const encodedEmail = encodeURIComponent(contact.email.trim());
+                            const unsubUrl = `${baseUrl}/api/unsubscribe?campaignId=${campaign.campaignId}&email=${encodedEmail}&logId=${logId.toHexString()}`;
+                            const bodyWithTracking = `${personalBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/><div style="text-align:center;margin-top:30px;font-size:12px;color:#6c757d;">If you no longer wish to receive these emails, <a href="${unsubUrl}" style="color:#6c757d;text-decoration:underline;">click here to unsubscribe</a>.</div>`;
                             const mailOptions: nodemailer.SendMailOptions = {
-                                from: authEmail.name
-                                    ? `${authEmail.name} <${authEmail.email}>`
-                                    : authEmail.email,
-                                to: campaign.toEmail,
-                                cc: campaign.sendMethod === "cc" ? recipientEmailsForBatch : undefined,
-                                bcc: campaign.sendMethod === "bcc" ? recipientEmailsForBatch : undefined,
-                                subject: campaign.emailSubject,
-                                replyTo: campaign.replyToEmail === "" ? authEmail.email : campaign.replyToEmail,
-                                html: emailBodyToSend, // No in-body link for BCC/CC
-                                headers: {
-                                    'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:${authEmail.email}?subject=Unsubscribe>`,
-                                    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-                                    'X-Website-URL': baseUrl, // optional custom header
-                                },
+                                from: authEmail.name ? `${authEmail.name} <${authEmail.email}>` : authEmail.email,
+                                to: contact.email.trim(), subject: personalSubject,
+                                replyTo: campaign.replyToEmail || authEmail.email,
+                                html: bodyWithTracking,
+                                headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
                             };
-
                             if (campaign.attachments?.length > 0) {
-                                mailOptions.attachments = campaign.attachments.map(
-                                    (attachment: Attachment) => ({
-                                        filename: attachment.filename,
-                                        content: Buffer.from(attachment.content, "base64"),
-                                        contentType: attachment.contentType,
-                                    })
-                                );
+                                mailOptions.attachments = campaign.attachments.map((a: Attachment) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType }));
                             }
-
-                            try {
-                                const result = await sendWithRetries(transporter, mailOptions, 3);
-                                if (result.success) {
-                                    console.log(` Sent batch from ${authEmail.email} to ${recipientEmailsForBatch.length} recipients.`);
-                                    if (await isFeatureAllowed(db, 'emailLogs')) {
-                                        const successLogs = recipientEmailsForBatch.map((email) => ({
-                                            campaignId: campaign.campaignId,
-                                            recipientEmail: email,
-                                            senderEmail: authEmail.email,
-                                            sendMethod: campaign.sendMethod,
-                                            status: "sent",
-                                            sentAt: new Date(),
-                                        }));
-                                        await db.collection("EmailLog").insertMany(successLogs);
-                                    }
-                                } else {
-                                    console.error(`Failed batch from ${authEmail.email}:`, result.error?.reason || 'unknown');
-                                    break;
+                            const result = await sendWithRetries(transporter, mailOptions, 3);
+                            if (result.success) {
+                                console.log(`Sent to ${contact.email}`);
+                                if (await isFeatureAllowed(db, 'emailLogs')) {
+                                    await db.collection("EmailLog").insertOne({ _id: logId, status: 'sent', campaignId: campaign.campaignId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: campaign.sendMethod, sentAt: new Date() });
                                 }
-                            } catch (emailError: unknown) {
-                                console.error(`Unexpected error while sending batch:`, emailError);
-                                break;
+                            } else {
+                                console.log(`Failed to send to ${contact.email}: ${result.error?.reason}`);
+                                if (await isFeatureAllowed(db, 'emailLogs')) {
+                                    await db.collection("EmailLog").insertOne({ _id: logId, status: 'failed', failureReason: result.error?.reason, failureCategory: result.error?.category, originalError: result.error?.originalError, campaignId: campaign.campaignId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: campaign.sendMethod, sentAt: new Date() });
+                                }
                             }
-
-                            if (remainingForSender > 0 && globalRecipientIndex < rows.length) {
-                                const jitter = Math.floor(Math.random() * 2000);
-                                const delay = BATCH_DELAY_MS + jitter;
-                                console.log(`Waiting ${delay}ms before next BCC/CC batch for ${authEmail.email}...`);
-                                await sleep(delay);
-                            }
+                            if (remaining > 0) await sleep(1000 + Math.floor(Math.random() * 2000));
                         }
                     } else {
-                        // Individual sending logic for 'one-on-one'
-                        
-                        const startOfDay = new Date();
-                        startOfDay.setHours(0, 0, 0, 0);
-                        // Count emails sent today BY THIS SENDER and FOR THIS CAMPAIGN
-                        const sentTodayForThisCampaign = await db.collection("EmailLog").countDocuments({
-                            senderEmail: authEmail.email,
-                            campaignId: campaign.campaignId, // <-- The crucial addition
-                            sentAt: { $gte: startOfDay },
-                            status: 'sent'
-                        });
-
-                        // Calculate how many more emails this sender needs to send for this campaign today
-                        let remainingForSender = Math.max(0, campaign.dailySendLimitPerSender - sentTodayForThisCampaign);
-
-                        if (remainingForSender === 0) {
-                            console.log(`Sender ${authEmail.email} has already met its goal of ${campaign.dailySendLimitPerSender} sends for campaign "${campaign.campaignName}" today.`);
-                            continue; // Move to the next sender
-                        }
-
-                        while (
-                            globalRecipientIndex < rows.length &&
-                            remainingForSender > 0
-                        ) {
-                            const recipientEmail = rows[globalRecipientIndex]?.[0];
-                            globalRecipientIndex++;
-                            if (!recipientEmail?.trim()) continue;
-
-                            const logId = new ObjectId();
-
-                            // --- Unsubscribe Check ---
-                            const trimmedEmail = recipientEmail.trim();
-                            if (await isUnsubscribed(db, trimmedEmail)) {
-                                console.log(`Skipping unsubscribed email ${trimmedEmail}.`);
-                                continue;
+                        // BCC / CC batch mode
+                        const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
+                        const BATCH_DELAY_MS = Number(process.env.BCC_BATCH_DELAY_MS) || 60000;
+                        let batchIdx = 0;
+                        while (remaining > 0 && batchIdx < orderedContacts.length) {
+                            const batchEmails: string[] = [];
+                            while (batchIdx < orderedContacts.length && batchEmails.length < Math.min(remaining, ENV_MAX)) {
+                                const contact = orderedContacts[batchIdx++];
+                                if (!contact.email?.trim()) continue;
+                                if (await isUnsubscribed(db, contact.email.trim())) continue;
+                                const v = await validateEmail(contact.email.trim());
+                                if (v.isValid) batchEmails.push(contact.email.trim());
                             }
-                            // -----------------------------
-
-                            // Validate email before sending
-                            const validation = await validateEmail(trimmedEmail);
-                            if (!validation.isValid) {
-                                console.log(`Skipping invalid email ${recipientEmail}: ${validation.reason}`);
-                                if (await isFeatureAllowed(db, 'emailLogs')) {
-                                    await db.collection("EmailLog").insertOne({
-                                        _id: logId,
-                                        status: "failed",
-                                        failureReason: `Validation failed: ${validation.reason}`,
-                                        failureCategory: 'validation',
-                                        originalError: validation.reason,
-                                        campaignId: campaign.campaignId,
-                                        recipientEmail: trimmedEmail,
-                                        senderEmail: authEmail.email,
-                                        sendMethod: campaign.sendMethod,
-                                        sentAt: new Date(),
-                                    });
-                                }
-                                continue;
-                            }
-
-                            remainingForSender--;
-
-                            // --- One-on-One: Tracking Pixel & Custom Unsubscribe Button in Body ---
-                            let emailBodyToSend = campaign.emailBody;
-                            const trackingPixelUrl = `${baseUrl}/api/track?logId=${logId.toHexString()}`;
-                            emailBodyToSend = `${campaign.emailBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/>`;
-                            
-                            // Create a unique, encoded unsubscribe link for the BODY
-                            // This link includes the email and logId, and will directly add the email to the DB on click.
-                            const encodedEmail = encodeURIComponent(trimmedEmail);
-                            const unsubscribeBodyUrl = `${baseUrl}/api/unsubscribe?campaignId=${campaign.campaignId}&email=${encodedEmail}&logId=${logId.toHexString()}`;
-
-                            const unsubscribeHtml = `
-                            <div style="text-align:center; margin-top: 30px;">
-                                <p style="
-                                font-size: 12px;
-                                color: #6c757d;
-                                margin: 0;
-                                ">
-                                If you no longer wish to receive these emails, 
-                                <a href="${unsubscribeBodyUrl}" target="_blank" style="
-                                    color: #6c757d;
-                                    text-decoration: underline;
-                                ">
-                                    click here to unsubscribe
-                                </a>.
-                                </p>
-                            </div>
-                            `;
-
-                            emailBodyToSend += unsubscribeHtml;
+                            if (batchEmails.length === 0) break;
+                            const unsubUrl = `${baseUrl}/unsubscribe`;
+                            const bodyWithUnsub = `${tpl.body}<div style="text-align:center;margin-top:30px;font-size:12px;color:#6c757d;">If you no longer wish to receive these emails, <a href="${unsubUrl}" style="color:#6c757d;text-decoration:underline;">click here to unsubscribe</a>.</div>`;
                             const mailOptions: nodemailer.SendMailOptions = {
-                                from: authEmail.name
-                                    ? `${authEmail.name} <${authEmail.email}>`
-                                    : authEmail.email,
-                                to: recipientEmail,
-                                subject: campaign.emailSubject,
-                                replyTo: campaign.replyToEmail === "" ? authEmail.email : campaign.replyToEmail,
-                                html: emailBodyToSend,
-                                headers: {
-                                    'List-Unsubscribe': `<${unsubscribeBodyUrl}>, <mailto:${authEmail.email}?subject=Unsubscribe>`,
-                                    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-                                    'X-Website-URL': baseUrl, // optional custom header
-                                },
+                                from: authEmail.name ? `${authEmail.name} <${authEmail.email}>` : authEmail.email,
+                                to: campaign.toEmail || batchEmails[0],
+                                cc: campaign.sendMethod === 'cc' ? batchEmails : undefined,
+                                bcc: campaign.sendMethod === 'bcc' ? batchEmails : undefined,
+                                subject: tpl.subject,
+                                replyTo: campaign.replyToEmail || authEmail.email,
+                                html: bodyWithUnsub,
+                                headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
                             };
-
-
                             if (campaign.attachments?.length > 0) {
-                                mailOptions.attachments = campaign.attachments.map(
-                                    (attachment: Attachment) => ({
-                                        filename: attachment.filename,
-                                        content: Buffer.from(attachment.content, "base64"),
-                                        contentType: attachment.contentType,
-                                    })
-                                );
+                                mailOptions.attachments = campaign.attachments.map((a: Attachment) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType }));
                             }
-
-                            try {
-                                const result = await sendWithRetries(transporter, mailOptions, 3);
-                                if (result.success) {
-                                    console.log(`Sent to ${recipientEmail.trim()}`);
-                                    if (await isFeatureAllowed(db, 'emailLogs')) {
-                                        await db.collection("EmailLog").insertOne({
-                                            _id: logId,
-                                            status: "sent",
-                                            campaignId: campaign.campaignId,
-                                            recipientEmail: trimmedEmail,
-                                            senderEmail: authEmail.email,
-                                            sendMethod: campaign.sendMethod,
-                                            sentAt: new Date(),
-                                        });
-                                    }
-                                } else {
-                                    console.log(`Failed to send to ${recipientEmail.trim()}: [${result.error?.category?.toUpperCase() || 'UNKNOWN'}] ${result.error?.reason || 'Failed'}`);
-                                    if (await isFeatureAllowed(db, 'emailLogs')) {
-                                        await db.collection("EmailLog").insertOne({
-                                            _id: logId,
-                                            status: "failed",
-                                            failureReason: result.error?.reason,
-                                            failureCategory: result.error?.category,
-                                            originalError: result.error?.originalError,
-                                            campaignId: campaign.campaignId,
-                                            recipientEmail: trimmedEmail,
-                                            senderEmail: authEmail.email,
-                                            sendMethod: campaign.sendMethod,
-                                            sentAt: new Date(),
-                                        });
-                                    }
+                            const result = await sendWithRetries(transporter, mailOptions, 3);
+                            if (result.success) {
+                                console.log(`Sent batch of ${batchEmails.length} from ${authEmail.email}.`);
+                                if (await isFeatureAllowed(db, 'emailLogs')) {
+                                    await db.collection("EmailLog").insertMany(batchEmails.map(email => ({ campaignId: campaign.campaignId, recipientEmail: email, senderEmail: authEmail.email, sendMethod: campaign.sendMethod, status: 'sent', sentAt: new Date() })));
                                 }
-
-                                // jittered delay between sends to avoid triggers (1s-3s)
-                                if (remainingForSender > 0) {
-                                    const delay = 1000 + Math.floor(Math.random() * 2000);
-                                    await sleep(delay);
-                                }
-                            } catch (emailError: unknown) {
-                                console.error(`Unexpected error while sending to ${recipientEmail.trim()}:`, emailError);
+                                remaining = Math.max(0, remaining - batchEmails.length);
+                            } else {
+                                console.error(`Batch failed: ${result.error?.reason}`);
+                                break;
+                            }
+                            if (remaining > 0 && batchIdx < orderedContacts.length) {
+                                await sleep(BATCH_DELAY_MS + Math.floor(Math.random() * 2000));
                             }
                         }
                     }
@@ -614,357 +446,12 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                 }
 
             } else {
-                // Randomly send enabled (Apply identical logic as above)
-
-                const shuffledRows = rows.slice(1);
-                for (let i = shuffledRows.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [shuffledRows[i], shuffledRows[j]] = [shuffledRows[j], shuffledRows[i]];
-                }
-                let globalRecipientIndex = 0;
-                for (const senderEmailAddress of campaign.commaId) {
-                    const authEmail = allSenderEmails.find((e) => e.email === senderEmailAddress.trim());
-                    if (!authEmail) {
-                        console.log(`Skipping sender ${senderEmailAddress}: Not found in AuthEmails.`);
-                        continue;
-                    }
-                    console.log(`Preparing to send from: ${authEmail.email}`);
-
-                    const transporter = nodemailer.createTransport({
-                        host: "smtp.gmail.com",
-                        port: 587,
-                        secure: false,
-                        auth: {
-                            user: authEmail.email ?? authEmail.main,
-                            pass: authEmail.app_password,
-                        },
-                    });
-
-                    // --- Send logic ---
-                    if (campaign.sendMethod === "bcc" || campaign.sendMethod === "cc") {
-                        // Batch sending logic for BCC/CC (RANDOM)
-                        
-                        const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
-                        const BATCH_DELAY_MS = Number(process.env.BCC_BATCH_DELAY_MS) || 60000;
-
-                        const startOfDay = new Date();
-                        startOfDay.setHours(0, 0, 0, 0);
-                        // Count emails sent today BY THIS SENDER and FOR THIS CAMPAIGN
-                        const sentTodayForThisCampaign = await db.collection("EmailLog").countDocuments({
-                            senderEmail: authEmail.email,
-                            campaignId: campaign.campaignId, // <-- The crucial addition
-                            sentAt: { $gte: startOfDay },
-                            status: 'sent'
-                        });
-
-                        // Calculate how many more emails this sender needs to send for this campaign today
-                        let remainingForSender = Math.max(0, campaign.dailySendLimitPerSender - sentTodayForThisCampaign);
-
-                        if (remainingForSender === 0) {
-                            console.log(`Sender ${authEmail.email} has already met its goal of ${campaign.dailySendLimitPerSender} sends for campaign "${campaign.campaignName}" today.`);
-                            continue; // Move to the next sender
-                        }
-
-
-                        while (remainingForSender > 0 && globalRecipientIndex < shuffledRows.length) {
-                            const recipientEmailsForBatch: string[] = [];
-                            const invalidEmails: { email: string; reason: string }[] = [];
-                            let i = 0;
-
-                            const allowedBatch = Math.min(remainingForSender, ENV_MAX);
-
-                            while (
-                                globalRecipientIndex < shuffledRows.length &&
-                                i < allowedBatch
-                            ) {
-                                const recipientEmail = shuffledRows[globalRecipientIndex]?.[0];
-                                globalRecipientIndex++;
-                                if (!recipientEmail?.trim()) continue;
-
-                                // --- Unsubscribe Check ---
-                                const trimmedEmail = recipientEmail.trim();
-                                if (await isUnsubscribed(db, trimmedEmail)) {
-                                    console.log(`Skipping unsubscribed email ${trimmedEmail}.`);
-                                    continue;
-                                }
-                                // -----------------------------
-
-                                const validation = await validateEmail(recipientEmail.trim());
-                                if (validation.isValid) {
-                                    recipientEmailsForBatch.push(recipientEmail.trim());
-                                    i++;
-                                } else {
-                                    console.log(`Skipping invalid email ${recipientEmail}: ${validation.reason}`);
-                                    invalidEmails.push({ email: recipientEmail.trim(), reason: validation.reason || 'Invalid email' });
-                                }
-                            }
-
-                            if (await isFeatureAllowed(db, 'emailLogs') && invalidEmails.length > 0) {
-                                const invalidLogs = invalidEmails.map((invalid) => ({
-                                    campaignId: campaign.campaignId,
-                                    recipientEmail: invalid.email,
-                                    senderEmail: authEmail.email,
-                                    sendMethod: campaign.sendMethod,
-                                    status: "failed",
-                                    failureReason: `Validation failed: ${invalid.reason}`,
-                                    failureCategory: 'validation',
-                                    originalError: invalid.reason,
-                                    sentAt: new Date(),
-                                }));
-                                await db.collection("EmailLog").insertMany(invalidLogs);
-                            }
-
-                            if (recipientEmailsForBatch.length === 0) {
-                                break;
-                            }
-                            let emailBodyToSend = campaign.emailBody;
-                            const unsubscribeHtml = `
-                                <div style="text-align:center; margin-top: 30px;">
-                                    <p style="
-                                    font-size: 12px;
-                                    color: #6c757d;
-                                    margin: 0;
-                                    ">
-                                    If you no longer wish to receive these emails, 
-                                    <a href="${baseUrl}/unsubscribe" target="_blank" style="
-                                        color: #6c757d;
-                                        text-decoration: underline;
-                                    ">
-                                        click here to unsubscribe
-                                    </a>.
-                                    </p>
-                                </div>
-                            `;
-                            emailBodyToSend += unsubscribeHtml;
-                            const unsubscribeUrl = `${baseUrl}/unsubscribe`;
-                            const mailOptions: nodemailer.SendMailOptions = {
-                                from: authEmail.name
-                                    ? `${authEmail.name} <${authEmail.email}>`
-                                    : authEmail.email,
-                                to: campaign.toEmail,
-                                cc: campaign.sendMethod === "cc" ? recipientEmailsForBatch : undefined,
-                                bcc: campaign.sendMethod === "bcc" ? recipientEmailsForBatch : undefined,
-                                subject: campaign.emailSubject,
-                                replyTo: campaign.replyToEmail === "" ? authEmail.email : campaign.replyToEmail,
-                                html: emailBodyToSend, // No in-body link for BCC/CC
-                                headers: {
-                                    'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:${authEmail.email}?subject=Unsubscribe>`,
-                                    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-                                    'X-Website-URL': baseUrl, // optional custom header
-                                },
-                            };
-
-                            if (campaign.attachments?.length > 0) {
-                                mailOptions.attachments = campaign.attachments.map(
-                                    (attachment: Attachment) => ({
-                                        filename: attachment.filename,
-                                        content: Buffer.from(attachment.content, "base64"),
-                                        contentType: attachment.contentType,
-                                    })
-                                );
-                            }
-
-                            try {
-                                const result = await sendWithRetries(transporter, mailOptions, 3);
-                                if (result.success) {
-                                    console.log(`Sent batch from ${authEmail.email} to ${recipientEmailsForBatch.length} recipients.`);
-                                    if (await isFeatureAllowed(db, 'emailLogs')) {
-                                        const successLogs = recipientEmailsForBatch.map((email) => ({
-                                            campaignId: campaign.campaignId,
-                                            recipientEmail: email,
-                                            senderEmail: authEmail.email,
-                                            sendMethod: campaign.sendMethod,
-                                            status: "sent",
-                                            sentAt: new Date(),
-                                        }));
-                                        await db.collection("EmailLog").insertMany(successLogs);
-                                    }
-
-                                    remainingForSender = Math.max(0, remainingForSender - recipientEmailsForBatch.length);
-                                } else {
-                                    console.error(`Failed batch from ${authEmail.email}:`, result.error?.reason || 'unknown');
-                                    break;
-                                }
-                            } catch (emailError: unknown) {
-                                console.error(`Unexpected error while sending batch:`, emailError);
-                                break;
-                            }
-
-                            if (remainingForSender > 0 && globalRecipientIndex < shuffledRows.length) {
-                                const jitter = Math.floor(Math.random() * 2000);
-                                const delay = BATCH_DELAY_MS + jitter;
-                                console.log(`Waiting ${delay}ms before next BCC/CC batch for ${authEmail.email}...`);
-                                await sleep(delay);
-                            }
-                        }
-                    } else {
-                        // Individual sending logic for 'one-on-one' (RANDOM)
-
-                        const startOfDay = new Date();
-                        startOfDay.setHours(0, 0, 0, 0);
-                        // Count emails sent today BY THIS SENDER and FOR THIS CAMPAIGN
-                        const sentTodayForThisCampaign = await db.collection("EmailLog").countDocuments({
-                            senderEmail: authEmail.email,
-                            campaignId: campaign.campaignId, // <-- The crucial addition
-                            sentAt: { $gte: startOfDay },
-                            status: 'sent'
-                        });
-
-                        // Calculate how many more emails this sender needs to send for this campaign today
-                        let remainingForSender = Math.max(0, campaign.dailySendLimitPerSender - sentTodayForThisCampaign);
-
-                        if (remainingForSender === 0) {
-                            console.log(`Sender ${authEmail.email} has already met its goal of ${campaign.dailySendLimitPerSender} sends for campaign "${campaign.campaignName}" today.`);
-                            continue; // Move to the next sender
-                        }
-
-                        while (
-                            globalRecipientIndex < shuffledRows.length &&
-                            remainingForSender > 0
-                        ) {
-                            const recipientEmail = shuffledRows[globalRecipientIndex]?.[0];
-                            globalRecipientIndex++;
-                            if (!recipientEmail?.trim()) continue;
-
-                            const logId = new ObjectId();
-
-                            // --- Unsubscribe Check ---
-                            const trimmedEmail = recipientEmail.trim();
-                            if (await isUnsubscribed(db, trimmedEmail)) {
-                                console.log(`Skipping unsubscribed email ${trimmedEmail}.`);
-                                continue;
-                            }
-                            // -----------------------------
-
-                            // Validate email before sending
-                            const validation = await validateEmail(recipientEmail.trim());
-                            if (!validation.isValid) {
-                                console.log(`Skipping invalid email ${recipientEmail}: ${validation.reason}`);
-                                if (await isFeatureAllowed(db, 'emailLogs')) {
-                                    await db.collection("EmailLog").insertOne({
-                                        _id: logId,
-                                        status: "failed",
-                                        failureReason: `Validation failed: ${validation.reason}`,
-                                        failureCategory: 'validation',
-                                        originalError: validation.reason,
-                                        campaignId: campaign.campaignId,
-                                        recipientEmail: trimmedEmail,
-                                        senderEmail: authEmail.email,
-                                        sendMethod: campaign.sendMethod,
-                                        sentAt: new Date(),
-                                    });
-                                }
-                                continue;
-                            }
-
-                            remainingForSender--;
-
-                            // --- One-on-One: Tracking Pixel & Custom Unsubscribe Button in Body ---
-                            let emailBodyToSend = campaign.emailBody;
-                            const trackingPixelUrl = `${baseUrl}/api/track?logId=${logId.toHexString()}`;
-                            emailBodyToSend = `${campaign.emailBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/>`;
-                            
-                            // Create a unique, encoded unsubscribe link for the BODY
-                            // This link includes the email and logId, and will directly add the email to the DB on click.
-                            const encodedEmail = encodeURIComponent(trimmedEmail);
-                            const unsubscribeBodyUrl = `${baseUrl}/api/unsubscribe?campaignId=${campaign.campaignId}&email=${encodedEmail}&logId=${logId.toHexString()}`;
-
-                            const unsubscribeHtml = `
-                            <div style="text-align:center; margin-top: 30px;">
-                                <p style="
-                                font-size: 12px;
-                                color: #6c757d;
-                                margin: 0;
-                                ">
-                                If you no longer wish to receive these emails, 
-                                <a href="${unsubscribeBodyUrl}" target="_blank" style="
-                                    color: #6c757d;
-                                    text-decoration: underline;
-                                ">
-                                    click here to unsubscribe
-                                </a>.
-                                </p>
-                            </div>
-                            `;
-
-                            emailBodyToSend += unsubscribeHtml;
-                            
-                            const mailOptions: nodemailer.SendMailOptions = {
-                                from: authEmail.name
-                                    ? `${authEmail.name} <${authEmail.email}>`
-                                    : authEmail.email,
-                                to: recipientEmail,
-                                subject: campaign.emailSubject,
-                                replyTo: campaign.replyToEmail === "" ? authEmail.email : campaign.replyToEmail,
-                                html: emailBodyToSend,
-                                headers: {
-                                    'List-Unsubscribe': `<${unsubscribeBodyUrl}>, <mailto:${authEmail.email}?subject=Unsubscribe>`,
-                                    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-                                    'X-Website-URL': baseUrl, // optional custom header
-                                },
-                            };
-
-                            if (campaign.attachments?.length > 0) {
-                                mailOptions.attachments = campaign.attachments.map(
-                                    (attachment: Attachment) => ({
-                                        filename: attachment.filename,
-                                        content: Buffer.from(attachment.content, "base64"),
-                                        contentType: attachment.contentType,
-                                    })
-                                );
-                            }
-
-                            try {
-                                const result = await sendWithRetries(transporter, mailOptions, 3);
-                                if (result.success) {
-                                    console.log(`Sent to ${recipientEmail.trim()}`);
-                                    if (await isFeatureAllowed(db, 'emailLogs')) {
-                                        await db.collection("EmailLog").insertOne({
-                                            _id: logId,
-                                            status: "sent",
-                                            campaignId: campaign.campaignId,
-                                            recipientEmail: trimmedEmail,
-                                            senderEmail: authEmail.email,
-                                            sendMethod: campaign.sendMethod,
-                                            sentAt: new Date(),
-                                        });
-                                    }
-                                } else {
-                                    console.log(`Failed to send to ${recipientEmail.trim()}: [${result.error?.category?.toUpperCase() || 'UNKNOWN'}] ${result.error?.reason || 'Failed'}`);
-                                    if (await isFeatureAllowed(db, 'emailLogs')) {
-                                        await db.collection("EmailLog").insertOne({
-                                            _id: logId,
-                                            status: "failed",
-                                            failureReason: result.error?.reason,
-                                            failureCategory: result.error?.category,
-                                            originalError: result.error?.originalError,
-                                            campaignId: campaign.campaignId,
-                                            recipientEmail: trimmedEmail,
-                                            senderEmail: authEmail.email,
-                                            sendMethod: campaign.sendMethod,
-                                            sentAt: new Date(),
-                                        });
-                                    }
-                                }
-
-                                // jittered delay between sends to avoid triggers (1s-3s)
-                                if (remainingForSender > 0) {
-                                    const delay = 1000 + Math.floor(Math.random() * 2000);
-                                    await sleep(delay);
-                                }
-                            } catch (emailError: unknown) {
-                                console.error(`Unexpected error while sending to ${recipientEmail.trim()}:`, emailError);
-                            }
-                        }
-                    }
-                    transporter.close();
-                }
-
+                console.log(`Campaign "${campaign.campaignName}" has no audienceId set. Skipping.`);
             }
 
             await db.collection("Campaigns").updateOne(
                 { _id: campaign._id },
-                { $set: { todaySent: todayDateOnly.toDateString() } } // Use toDateString to be consistent
+                { $set: { todaySent: todayISTStr } } // YYYY-MM-DD in IST — no timezone ambiguity
             );
             console.log(`Marked campaign as sent for today.`);
 
@@ -995,6 +482,253 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                     console.log("Campaign uses bulk method, no tracking pixels to clean up");
                 }
             }
+        }
+
+        // =====================================================================
+        // PROCESS ONE-TIME BROADCASTS
+        // =====================================================================
+        console.log("\n--- Processing One-Time Broadcasts ---");
+        const todayIST = getTodayIST();
+        const pendingBroadcasts = await db
+            .collection<Broadcast>("Broadcasts")
+            .find({ status: "pending", sendDate: todayIST })
+            .toArray();
+        console.log(`Found ${pendingBroadcasts.length} broadcast(s) scheduled for today.`);
+
+        for (const broadcast of pendingBroadcasts) {
+            if (!timeHasPassed(broadcast.sendTime)) {
+                console.log(`Broadcast "${broadcast.name}" send time ${broadcast.sendTime} not reached yet. Skipping.`);
+                continue;
+            }
+            console.log(`\nProcessing broadcast: "${broadcast.name}"`);
+
+            // Resolve template
+            const broadcastTpl = await resolveTemplate(db, broadcast.templateId);
+            if (!broadcastTpl) {
+                console.log(`Broadcast "${broadcast.name}" has no valid template "${broadcast.templateId}". Skipping.`);
+                continue;
+            }
+
+            // Load audience contacts
+            if (!broadcast.audienceId) {
+                console.log(`Broadcast "${broadcast.name}" has no audienceId. Skipping.`);
+                continue;
+            }
+            const contacts = await loadAudienceContacts(db, broadcast.audienceId);
+            if (contacts.length === 0) {
+                console.log(`Audience for broadcast "${broadcast.name}" is empty or not found. Skipping.`);
+                continue;
+            }
+            console.log(`Audience loaded: ${contacts.length} contacts.`);
+
+            // Send via each sender
+            for (const senderAddress of broadcast.senderEmails) {
+                const authEmail = allSenderEmails.find(e => e.email === senderAddress.trim());
+                if (!authEmail) {
+                    console.log(`Sender ${senderAddress} not found in AuthEmails. Skipping.`);
+                    continue;
+                }
+
+                const transporter = nodemailer.createTransport({
+                    host: "smtp.gmail.com",
+                    port: 587,
+                    secure: false,
+                    auth: {
+                        user: authEmail.email ?? authEmail.main,
+                        pass: safeDecrypt(authEmail.app_password),
+                    },
+                });
+
+                const baseUrl = (process.env.TRACKING_PIXEL_BASE_URL || process.env.NEXT_PUBLIC_BASE_URL || 'https://schedular-plum.vercel.app').replace(/\/$/, '');
+                let globalIdx = 0;
+                let remaining = broadcast.dailySendLimitPerSender;
+                const orderedContacts = broadcast.randomSend ? [...contacts].sort(() => Math.random() - 0.5) : contacts;
+
+                if (broadcast.sendMethod === 'one-on-one') {
+                    while (globalIdx < orderedContacts.length && remaining > 0) {
+                        const contact = orderedContacts[globalIdx++];
+                        if (!contact.email?.trim()) continue;
+                        if (await isUnsubscribed(db, contact.email.trim())) { console.log(`Skipping unsubscribed ${contact.email}`); continue; }
+                        const validation = await validateEmail(contact.email.trim());
+                        if (!validation.isValid) { console.log(`Skipping invalid ${contact.email}: ${validation.reason}`); continue; }
+
+                        const personalBody = applyVariables(broadcastTpl.body, contact);
+                        const personalSubject = applyVariables(broadcastTpl.subject, contact);
+                        const logId = new ObjectId();
+                        const trackingPixelUrl = `${baseUrl}/api/track?logId=${logId.toHexString()}`;
+                        const encodedEmail = encodeURIComponent(contact.email.trim());
+                        const unsubUrl = `${baseUrl}/api/unsubscribe?campaignId=${broadcast.broadcastId}&email=${encodedEmail}&logId=${logId.toHexString()}`;
+                        const bodyWithTracking = `${personalBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/><div style="text-align:center;margin-top:30px;font-size:12px;color:#6c757d;">If you no longer wish to receive these emails, <a href="${unsubUrl}" style="color:#6c757d;text-decoration:underline;">click here to unsubscribe</a>.</div>`;
+
+                        const mailOptions: nodemailer.SendMailOptions = {
+                            from: authEmail.name ? `${authEmail.name} <${authEmail.email}>` : authEmail.email,
+                            to: contact.email.trim(),
+                            subject: personalSubject,
+                            replyTo: broadcast.replyToEmail || authEmail.email,
+                            html: bodyWithTracking,
+                            headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+                        };
+                        if (broadcast.attachments?.length > 0) {
+                            mailOptions.attachments = broadcast.attachments.map((a: Attachment) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType }));
+                        }
+                        const result = await sendWithRetries(transporter, mailOptions, 3);
+                        if (result.success) {
+                            console.log(`Sent broadcast to ${contact.email}`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertOne({ _id: logId, status: 'sent', campaignId: broadcast.broadcastId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: broadcast.sendMethod, sentAt: new Date() });
+                            }
+                        } else {
+                            console.log(`Failed broadcast to ${contact.email}: ${result.error?.reason}`);
+                        }
+                        remaining--;
+                        if (remaining > 0 && globalIdx < orderedContacts.length) await sleep(1000 + Math.floor(Math.random() * 2000));
+                    }
+                } else {
+                    // BCC/CC batch
+                    const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
+                    const batchEmails = orderedContacts.slice(0, Math.min(remaining, ENV_MAX)).map(c => c.email).filter(Boolean) as string[];
+                    if (batchEmails.length > 0) {
+                        const unsubUrl = `${baseUrl}/unsubscribe`;
+                        const bodyWithUnsub = `${broadcastTpl.body}<div style="text-align:center;margin-top:30px;font-size:12px;color:#6c757d;">If you no longer wish to receive these emails, <a href="${unsubUrl}" style="color:#6c757d;text-decoration:underline;">click here to unsubscribe</a>.</div>`;
+                        const mailOptions: nodemailer.SendMailOptions = {
+                            from: authEmail.name ? `${authEmail.name} <${authEmail.email}>` : authEmail.email,
+                            to: broadcast.toEmail || batchEmails[0],
+                            cc: broadcast.sendMethod === 'cc' ? batchEmails : undefined,
+                            bcc: broadcast.sendMethod === 'bcc' ? batchEmails : undefined,
+                            subject: broadcastTpl.subject,
+                            replyTo: broadcast.replyToEmail || authEmail.email,
+                            html: bodyWithUnsub,
+                            headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+                        };
+                        const result = await sendWithRetries(transporter, mailOptions, 3);
+                        if (result.success) {
+                            console.log(`Sent broadcast batch from ${authEmail.email} to ${batchEmails.length} recipients.`);
+                        }
+                    }
+                }
+                transporter.close();
+            }
+
+            // Mark as sent then delete
+            await db.collection("Broadcasts").updateOne({ broadcastId: broadcast.broadcastId }, { $set: { status: 'sent', updatedAt: new Date() } });
+            console.log(`Broadcast "${broadcast.name}" marked as sent. Will be cleaned up next run.`);
+        }
+
+        // Clean up sent broadcasts
+        await db.collection("Broadcasts").deleteMany({ status: 'sent' });
+
+        // =====================================================================
+        // PROCESS DATE-BASED AUTOMATIONS
+        // =====================================================================
+        console.log("\n--- Processing Date-Based Automations ---");
+        const activeAutomations = await db
+            .collection<DateAutomation>("DateAutomations")
+            .find({ isActive: true })
+            .toArray();
+        console.log(`Found ${activeAutomations.length} active date automation(s).`);
+
+        for (const automation of activeAutomations) {
+            // Find a scheduled date entry for today that hasn't been sent yet
+            const todayEntry = automation.scheduledDates?.find(d => d.date === todayIST);
+            if (!todayEntry) continue;
+            if ((automation.sentDates || []).includes(todayIST)) {
+                console.log(`Automation "${automation.name}" already sent for today. Skipping.`);
+                continue;
+            }
+            if (!timeHasPassed(todayEntry.sendTime)) {
+                console.log(`Automation "${automation.name}" send time ${todayEntry.sendTime} not reached yet.`);
+                continue;
+            }
+            console.log(`\nProcessing automation: "${automation.name}" for ${todayIST}`);
+
+            const automationTpl = await resolveTemplate(db, automation.templateId);
+            if (!automationTpl) {
+                console.log(`Automation "${automation.name}" has no valid template "${automation.templateId}". Skipping.`);
+                continue;
+            }
+            if (!automation.audienceId) { console.log(`No audienceId. Skipping.`); continue; }
+            const contacts = await loadAudienceContacts(db, automation.audienceId);
+            if (contacts.length === 0) { console.log(`Audience empty. Skipping.`); continue; }
+            console.log(`Audience loaded: ${contacts.length} contacts.`);
+
+            for (const senderAddress of automation.senderEmails) {
+                const authEmail = allSenderEmails.find(e => e.email === senderAddress.trim());
+                if (!authEmail) { console.log(`Sender ${senderAddress} not found. Skipping.`); continue; }
+
+                const transporter = nodemailer.createTransport({
+                    host: "smtp.gmail.com",
+                    port: 587,
+                    secure: false,
+                    auth: {
+                        user: authEmail.email ?? authEmail.main,
+                        pass: safeDecrypt(authEmail.app_password),
+                    },
+                });
+
+                const baseUrl = (process.env.TRACKING_PIXEL_BASE_URL || process.env.NEXT_PUBLIC_BASE_URL || 'https://schedular-plum.vercel.app').replace(/\/$/, '');
+                const orderedContacts = automation.randomSend ? [...contacts].sort(() => Math.random() - 0.5) : contacts;
+                let remaining = automation.dailySendLimitPerSender;
+                let globalIdx = 0;
+
+                if (automation.sendMethod === 'one-on-one') {
+                    while (globalIdx < orderedContacts.length && remaining > 0) {
+                        const contact = orderedContacts[globalIdx++];
+                        if (!contact.email?.trim()) continue;
+                        if (await isUnsubscribed(db, contact.email.trim())) continue;
+                        const validation = await validateEmail(contact.email.trim());
+                        if (!validation.isValid) continue;
+
+                        const personalBody = applyVariables(automationTpl.body, contact);
+                        const personalSubject = applyVariables(automationTpl.subject, contact);
+                        const logId = new ObjectId();
+                        const trackingPixelUrl = `${baseUrl}/api/track?logId=${logId.toHexString()}`;
+                        const encodedEmail = encodeURIComponent(contact.email.trim());
+                        const unsubUrl = `${baseUrl}/api/unsubscribe?campaignId=${automation.automationId}&email=${encodedEmail}&logId=${logId.toHexString()}`;
+                        const bodyWithTracking = `${personalBody}<img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;"/><div style="text-align:center;margin-top:30px;font-size:12px;color:#6c757d;">If you no longer wish to receive these emails, <a href="${unsubUrl}" style="color:#6c757d;text-decoration:underline;">click here to unsubscribe</a>.</div>`;
+
+                        const result = await sendWithRetries(transporter, {
+                            from: authEmail.name ? `${authEmail.name} <${authEmail.email}>` : authEmail.email,
+                            to: contact.email.trim(), subject: personalSubject, replyTo: automation.replyToEmail || authEmail.email,
+                            html: bodyWithTracking,
+                            headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+                            attachments: automation.attachments?.length > 0 ? automation.attachments.map((a: Attachment) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType })) : undefined,
+                        }, 3);
+                        if (result.success) {
+                            console.log(`Automation sent to ${contact.email}`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertOne({ _id: logId, status: 'sent', campaignId: automation.automationId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: automation.sendMethod, sentAt: new Date() });
+                            }
+                        }
+                        remaining--;
+                        if (remaining > 0) await sleep(1000 + Math.floor(Math.random() * 2000));
+                    }
+                } else {
+                    const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
+                    const batchEmails = orderedContacts.slice(0, Math.min(remaining, ENV_MAX)).map(c => c.email).filter(Boolean) as string[];
+                    if (batchEmails.length > 0) {
+                        const unsubUrl = `${baseUrl}/unsubscribe`;
+                        const bodyWithUnsub = `${automationTpl.body}<div style="text-align:center;margin-top:30px;font-size:12px;color:#6c757d;">If you no longer wish to receive these emails, <a href="${unsubUrl}" style="color:#6c757d;text-decoration:underline;">click here to unsubscribe</a>.</div>`;
+                        const result = await sendWithRetries(transporter, {
+                            from: authEmail.name ? `${authEmail.name} <${authEmail.email}>` : authEmail.email,
+                            to: automation.toEmail || batchEmails[0],
+                            cc: automation.sendMethod === 'cc' ? batchEmails : undefined,
+                            bcc: automation.sendMethod === 'bcc' ? batchEmails : undefined,
+                            subject: automationTpl.subject, replyTo: automation.replyToEmail || authEmail.email,
+                            html: bodyWithUnsub,
+                            headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+                        }, 3);
+                        if (result.success) console.log(`Automation batch sent from ${authEmail.email} to ${batchEmails.length} recipients.`);
+                    }
+                }
+                transporter.close();
+            }
+
+            // Mark this date as sent
+            await db.collection("DateAutomations").updateOne(
+                { automationId: automation.automationId },
+                { $addToSet: { sentDates: todayIST }, $set: { updatedAt: new Date() } }
+            );
+            console.log(`Automation "${automation.name}" marked as sent for ${todayIST}.`);
         }
 
         console.log("\nEmail job completed successfully!");

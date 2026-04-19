@@ -8,9 +8,13 @@ import Image from 'next/image';
 // e.g., @/hooks/useDashboardStats.ts
 // e.g., @/components/Notification.tsx
 
-// --- Types (assuming they are in @/types/) ---
+// --- Types ---
 import { CampaignFormData, Campaign } from '@/types/campaign';
 import { EmailLog } from '@/types/emailLog';
+import { EmailTemplate } from '@/types/template';
+import { Audience } from '@/types/audience';
+import { Broadcast } from '@/types/broadcast';
+import { DateAutomation } from '@/types/dateAutomation';
 
 // --- Context ---
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,7 +23,11 @@ import { useTheme, useFeatureAllowed } from '@/contexts/ThemeContext';
 // --- Components ---
 import ProtectedRoute from '@/components/ProtectedRoute';
 import CampaignForm from '@/components/CampaignForm';
-import { FiMail, FiCheckCircle, FiAlertCircle, FiX, FiBarChart, FiEye, FiRefreshCw } from 'react-icons/fi';
+import TemplateModal from '@/components/TemplateModal';
+import AudienceModal from '@/components/AudienceModal';
+import BroadcastModal from '@/components/BroadcastModal';
+import DateAutomationModal from '@/components/DateAutomationModal';
+import { FiMail, FiCheckCircle, FiAlertCircle, FiX, FiBarChart, FiEye, FiRefreshCw, FiUsers, FiCalendar, FiTrash2, FiPlus } from 'react-icons/fi';
 import TemplatePreviewModal from '@/components/TemplatePreviewModal';
 // --- Data Fetching Hooks --------------------------------------------------
 
@@ -235,6 +243,48 @@ const useEmailLogs = () => {
 };
 
 
+// --- Simple list hooks for new collections --------------------------------
+
+const useTemplates = (trigger: number) => {
+    const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        setLoading(true);
+        fetch('/api/templates').then(r => r.json()).then(d => { if (d.success) setTemplates(d.templates); }).finally(() => setLoading(false));
+    }, [trigger]);
+    return { templates, loading };
+};
+
+const useAudiences = (trigger: number) => {
+    const [audiences, setAudiences] = useState<Audience[]>([]);
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        setLoading(true);
+        fetch('/api/audiences').then(r => r.json()).then(d => { if (d.success) setAudiences(d.audiences); }).finally(() => setLoading(false));
+    }, [trigger]);
+    return { audiences, loading };
+};
+
+const useBroadcasts = (trigger: number) => {
+    const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        setLoading(true);
+        fetch('/api/broadcasts').then(r => r.json()).then(d => { if (d.success) setBroadcasts(d.broadcasts); }).finally(() => setLoading(false));
+    }, [trigger]);
+    return { broadcasts, loading };
+};
+
+const useDateAutomations = (trigger: number) => {
+    const [automations, setAutomations] = useState<DateAutomation[]>([]);
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        setLoading(true);
+        fetch('/api/date-automations').then(r => r.json()).then(d => { if (d.success) setAutomations(d.automations); }).finally(() => setLoading(false));
+    }, [trigger]);
+    return { automations, loading };
+};
+
 // --- UI Components --------------------------------------------------------
 
 type NotificationType = 'success' | 'error';
@@ -283,13 +333,32 @@ export default function DashboardPage() {
     const [selectedLog, setSelectedLog] = useState<EmailLog | null>(null);
     const [isDeleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
 
-    // Sidebar state - Dashboard is now the main home page
-    const [activeSection, setActiveSection] = useState<'dashboard' | 'email-templates' | 'campaigns' | 'one-time-broadcast' | 'date-based-automation'>('dashboard');
+    // Sidebar state
+    const [activeSection, setActiveSection] = useState<'dashboard' | 'email-templates' | 'audiences' | 'campaigns' | 'one-time-broadcast' | 'date-based-automation'>('dashboard');
+
+    // Refresh triggers for new collections
+    const [templatesTrigger, setTemplatesTrigger] = useState(0);
+    const [audiencesTrigger, setAudiencesTrigger] = useState(0);
+    const [broadcastsTrigger, setBroadcastsTrigger] = useState(0);
+    const [automationsTrigger, setAutomationsTrigger] = useState(0);
+
+    // Modal state for new features
+    const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+    const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
+    const [isAudienceModalOpen, setIsAudienceModalOpen] = useState(false);
+    const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
+    const [editingBroadcast, setEditingBroadcast] = useState<Broadcast | null>(null);
+    const [isDateAutomationModalOpen, setIsDateAutomationModalOpen] = useState(false);
+    const [editingAutomation, setEditingAutomation] = useState<DateAutomation | null>(null);
 
     // Using our custom hooks
-    const { campaigns, isLoading: campaignsLoading, addOrUpdateCampaign, deleteCampaign } = useCampaigns();
+    const { campaigns, isLoading: campaignsLoading, addOrUpdateCampaign, deleteCampaign, refresh } = useCampaigns();
     const { stats, isLoading: statsLoading } = useDashboardStats();
     const { logs, loading: logsLoading, error: logsError, filter, setFilter, searchTerm, setSearchTerm, campaignFilter, setCampaignFilter, page, setPage, totalPages, refresh: refreshLogs, deleteAllLogs } = useEmailLogs();
+    const { templates, loading: templatesLoading } = useTemplates(templatesTrigger);
+    const { audiences, loading: audiencesLoading } = useAudiences(audiencesTrigger);
+    const { broadcasts, loading: broadcastsLoading } = useBroadcasts(broadcastsTrigger);
+    const { automations, loading: automationsLoading } = useDateAutomations(automationsTrigger);
 
     if (themeLoading) {
         return (
@@ -325,6 +394,30 @@ export default function DashboardPage() {
             showNotification(result.error || 'Failed to delete campaign.', 'error');
         }
         setCampaignToDelete(null); // Close modal
+    };
+
+    /**
+     * Toggle the sentToday state for a campaign.
+     * markAsSent = true  → set todaySent to today (prevent resend this run)
+     * markAsSent = false → roll back to yesterday (allow resend today)
+     */
+    const handleToggleSentToday = async (campaignId: string, markAsSent: boolean) => {
+        try {
+            const response = await fetch(`/api/campaigns?campaignId=${campaignId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'reset-sent-today', value: markAsSent }),
+            });
+            if (!response.ok) throw new Error('Failed to update');
+            // Refresh campaign list so todaySent is up-to-date
+            await refresh();
+            showNotification(
+                markAsSent ? 'Campaign marked as already sent today.' : 'Campaign will resend today.',
+                'success'
+            );
+        } catch {
+            showNotification('Failed to update sent status.', 'error');
+        }
     };
 
     const handleOpenForm = (campaign: Campaign | null = null) => {
@@ -382,9 +475,8 @@ export default function DashboardPage() {
                             />
                         </div>
                         <div className="flex items-center space-x-4">
-                            {user?.photoURL && <Image src={user.photoURL} alt="Profile" width={40} height={40} className="rounded-full" />}
                             <div className="text-right">
-                                <p className="text-sm font-medium text-gray-900">{user?.displayName}</p>
+                                <p className="text-sm font-medium text-gray-900">{user?.name}</p>
                                 <p className="text-sm text-gray-500">{user?.email}</p>
                             </div>
                             <button onClick={logout} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">Logout</button>
@@ -472,6 +564,18 @@ export default function DashboardPage() {
                                     </button>
                                 )}
 
+                                {/* Audiences - always visible when any feature is on */}
+                                {(emailTemplateAllowed || campaignAllowed || oneTimeBroadcastAllowed || dateBasedAutomationAllowed) && (
+                                    <button
+                                        onClick={() => setActiveSection('audiences')}
+                                        className={`w-full flex items-center px-4 py-2 text-left rounded-lg transition cursor-pointer ${activeSection === 'audiences' ? 'text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                                        style={activeSection === 'audiences' ? { backgroundColor: settings.themeColor } : {}}
+                                    >
+                                        <FiUsers className="w-5 h-5 mr-3" />
+                                        Audiences
+                                    </button>
+                                )}
+
                                 {!emailTemplateAllowed && !emailLogsAllowed && !campaignAllowed && !oneTimeBroadcastAllowed && !dateBasedAutomationAllowed && (
                                     <div className="text-center py-8 text-gray-500">
                                         <p className="text-sm">No features enabled.</p>
@@ -495,96 +599,19 @@ export default function DashboardPage() {
                                             <div className="mb-8">
                                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                                     {emailTemplateAllowed && (
-                                                        <div
-                                                            className="bg-white p-6 rounded-lg shadow-sm border-2 border-gray-200 hover:border-current cursor-pointer transition-all group"
-                                                            style={{ '--hover-border-color': settings.themeColor } as React.CSSProperties}
-                                                            onMouseEnter={(e) => e.currentTarget.style.borderColor = settings.themeColor}
-                                                            onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}
-                                                        >
-                                                            <div className="flex flex-col items-center text-center">
-                                                                <div className="p-4 rounded-full mb-4" style={{ backgroundColor: `${settings.themeColor}20` }}>
-                                                                    <FiMail className="w-8 h-8" style={{ color: settings.themeColor }} />
-                                                                </div>
-                                                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Email Template</h3>
-                                                                <p className="text-sm text-gray-600 mb-4">Create reusable email templates</p>
-                                                                <button
-                                                                    className="px-4 py-2 text-white rounded-lg hover:opacity-90 transition text-sm"
-                                                                    style={{ backgroundColor: settings.themeColor }}
-                                                                >
-                                                                    Create Template
-                                                                </button>
-                                                            </div>
-                                                        </div>
+                                                        <QuickCreateCard icon={<FiMail />} title="Email Template" desc="Create reusable email templates" btnLabel="Create Template" themeColor={settings.themeColor} onClick={() => { setEditingTemplate(null); setIsTemplateModalOpen(true); }} />
                                                     )}
-
                                                     {campaignAllowed && (
-                                                        <div
-                                                            onClick={() => handleOpenForm()}
-                                                            className="bg-white p-6 rounded-lg shadow-sm border-2 border-gray-200 hover:border-current cursor-pointer transition-all group"
-                                                            style={{ '--hover-border-color': settings.themeColor } as React.CSSProperties}
-                                                            onMouseEnter={(e) => e.currentTarget.style.borderColor = settings.themeColor}
-                                                            onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}
-                                                        >
-                                                            <div className="flex flex-col items-center text-center">
-                                                                <div className="p-4 rounded-full mb-4" style={{ backgroundColor: `${settings.themeColor}20` }}>
-                                                                    <FiRefreshCw className="w-8 h-8" style={{ color: settings.themeColor }} />
-                                                                </div>
-                                                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Campaign</h3>
-                                                                <p className="text-sm text-gray-600 mb-4">Launch automated campaigns</p>
-                                                                <button
-                                                                    className="px-4 py-2 text-white rounded-lg hover:opacity-90 transition text-sm"
-                                                                    style={{ backgroundColor: settings.themeColor }}
-                                                                >
-                                                                    Create Campaign
-                                                                </button>
-                                                            </div>
-                                                        </div>
+                                                        <QuickCreateCard icon={<FiRefreshCw />} title="Campaign" desc="Launch automated campaigns" btnLabel="Create Campaign" themeColor={settings.themeColor} onClick={() => handleOpenForm()} />
                                                     )}
-
                                                     {oneTimeBroadcastAllowed && (
-                                                        <div
-                                                            className="bg-white p-6 rounded-lg shadow-sm border-2 border-gray-200 hover:border-current cursor-pointer transition-all group"
-                                                            style={{ '--hover-border-color': settings.themeColor } as React.CSSProperties}
-                                                            onMouseEnter={(e) => e.currentTarget.style.borderColor = settings.themeColor}
-                                                            onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}
-                                                        >
-                                                            <div className="flex flex-col items-center text-center">
-                                                                <div className="p-4 rounded-full mb-4" style={{ backgroundColor: `${settings.themeColor}20` }}>
-                                                                    <FiMail className="w-8 h-8" style={{ color: settings.themeColor }} />
-                                                                </div>
-                                                                <h3 className="text-lg font-semibold text-gray-900 mb-2">One-Time Broadcast</h3>
-                                                                <p className="text-sm text-gray-600 mb-4">Send instant broadcasts</p>
-                                                                <button
-                                                                    className="px-4 py-2 text-white rounded-lg hover:opacity-90 transition text-sm"
-                                                                    style={{ backgroundColor: settings.themeColor }}
-                                                                >
-                                                                    Create Broadcast
-                                                                </button>
-                                                            </div>
-                                                        </div>
+                                                        <QuickCreateCard icon={<FiMail />} title="One-Time Broadcast" desc="Send once on a specific date" btnLabel="Create Broadcast" themeColor={settings.themeColor} onClick={() => { setEditingBroadcast(null); setIsBroadcastModalOpen(true); }} />
                                                     )}
-
                                                     {dateBasedAutomationAllowed && (
-                                                        <div
-                                                            className="bg-white p-6 rounded-lg shadow-sm border-2 border-gray-200 hover:border-current cursor-pointer transition-all group"
-                                                            style={{ '--hover-border-color': settings.themeColor } as React.CSSProperties}
-                                                            onMouseEnter={(e) => e.currentTarget.style.borderColor = settings.themeColor}
-                                                            onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}
-                                                        >
-                                                            <div className="flex flex-col items-center text-center">
-                                                                <div className="p-4 rounded-full mb-4" style={{ backgroundColor: `${settings.themeColor}20` }}>
-                                                                    <FiRefreshCw className="w-8 h-8" style={{ color: settings.themeColor }} />
-                                                                </div>
-                                                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Date-Based Automation</h3>
-                                                                <p className="text-sm text-gray-600 mb-4">Automate by dates</p>
-                                                                <button
-                                                                    className="px-4 py-2 text-white rounded-lg hover:opacity-90 transition text-sm"
-                                                                    style={{ backgroundColor: settings.themeColor }}
-                                                                >
-                                                                    Create Automation
-                                                                </button>
-                                                            </div>
-                                                        </div>
+                                                        <QuickCreateCard icon={<FiCalendar />} title="Date-Based Automation" desc="Automate by specific dates" btnLabel="Create Automation" themeColor={settings.themeColor} onClick={() => { setEditingAutomation(null); setIsDateAutomationModalOpen(true); }} />
+                                                    )}
+                                                    {(emailTemplateAllowed || campaignAllowed || oneTimeBroadcastAllowed || dateBasedAutomationAllowed) && (
+                                                        <QuickCreateCard icon={<FiUsers />} title="Audiences" desc={audiences.length > 0 ? `${audiences.length} audience${audiences.length !== 1 ? 's' : ''} · ${audiences.reduce((s, a) => s + (a.totalContacts || 0), 0).toLocaleString()} contacts` : "Upload your contact lists"} btnLabel="Upload Audience" themeColor={settings.themeColor} onClick={() => setActiveSection('audiences')} />
                                                     )}
                                                 </div>
                                             </div>
@@ -735,17 +762,35 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            {/* Email Templates Page - Show all email templates with edit/delete */}
+                            {/* Email Templates Page */}
                             {activeSection === 'email-templates' && emailTemplateAllowed && (
                                 <div>
-                                    <h1 className="text-2xl font-bold text-gray-900 mb-8">Email Templates</h1>
-                                    <div className="bg-white p-6 rounded-lg shadow-sm">
-                                        <div className="text-center py-12">
-                                            <FiMail className="text-gray-300 text-5xl mx-auto mb-4" />
-                                            <p className="text-gray-600 font-semibold">No templates created yet</p>
-                                            <p className="text-gray-500 mb-4">Create your first email template from the dashboard.</p>
-                                        </div>
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h1 className="text-2xl font-bold text-gray-900">Email Templates</h1>
+                                        <button onClick={() => { setEditingTemplate(null); setIsTemplateModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm" style={{ backgroundColor: settings.themeColor }}>
+                                            <FiPlus /> New Template
+                                        </button>
                                     </div>
+                                    {templatesLoading ? <p className="text-center p-8 text-gray-500">Loading…</p> : templates.length === 0 ? (
+                                        <div className="bg-white rounded-lg p-12 text-center shadow-sm">
+                                            <FiMail className="text-gray-300 text-5xl mx-auto mb-4" />
+                                            <p className="text-gray-600 font-semibold">No templates yet</p>
+                                            <p className="text-gray-500 text-sm mt-1">Click "New Template" to create one.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {templates.map(t => (
+                                                <div key={t.templateId} className="bg-white rounded-lg border p-5 hover:shadow-md transition">
+                                                    <div className="flex items-start justify-between mb-2">
+                                                        <h3 className="font-semibold text-gray-900 truncate">{t.name}</h3>
+                                                        <button onClick={() => { setEditingTemplate(t); setIsTemplateModalOpen(true); }} className="text-xs px-2 py-1 rounded text-white ml-2 shrink-0" style={{ backgroundColor: settings.themeColor }}>Edit</button>
+                                                    </div>
+                                                    <p className="text-sm text-gray-500 truncate">{t.subject}</p>
+                                                    <p className="text-xs text-gray-400 mt-2">{new Date(t.createdAt).toLocaleDateString()}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -776,7 +821,7 @@ export default function DashboardPage() {
                                                             >
                                                                 Edit
                                                             </button>
-                                                            <button 
+                                                            <button
                                                                 onClick={() => handleOpenTemplate(campaign)}
                                                                 className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:opacity-90 transition text-sm"
                                                             >
@@ -797,31 +842,110 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
+                            {/* Audiences Page */}
+                            {activeSection === 'audiences' && (
+                                <div>
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h1 className="text-2xl font-bold text-gray-900">Audiences</h1>
+                                        <button onClick={() => setIsAudienceModalOpen(true)} className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm" style={{ backgroundColor: settings.themeColor }}>
+                                            <FiPlus /> Upload Audience
+                                        </button>
+                                    </div>
+                                    {audiencesLoading ? <p className="text-center p-8 text-gray-500">Loading…</p> : audiences.length === 0 ? (
+                                        <div className="bg-white rounded-lg p-12 text-center shadow-sm">
+                                            <FiUsers className="text-gray-300 text-5xl mx-auto mb-4" />
+                                            <p className="text-gray-600 font-semibold">No audiences yet</p>
+                                            <p className="text-gray-500 text-sm mt-1">Upload a CSV or Excel sheet to create your first audience.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {audiences.map(a => (
+                                                <div key={a.audienceId} className="bg-white rounded-lg border p-5 hover:shadow-md transition">
+                                                    <div className="flex items-start justify-between mb-2">
+                                                        <h3 className="font-semibold text-gray-900 truncate">{a.name}</h3>
+                                                        <button onClick={async () => { if (confirm(`Delete audience "${a.name}"?`)) { await fetch(`/api/audiences/${a.audienceId}`, { method: 'DELETE' }); setAudiencesTrigger(p => p + 1); } }} className="text-red-400 hover:text-red-600 ml-2 shrink-0"><FiTrash2 size={14} /></button>
+                                                    </div>
+                                                    <p className="text-sm text-gray-500">{a.totalContacts} contacts</p>
+                                                    <div className="flex flex-wrap gap-1 mt-2">
+                                                        {(a.columns || []).slice(0, 4).map((col: string) => (
+                                                            <span key={col} className="px-2 py-0.5 bg-gray-100 rounded-full text-xs text-gray-600">{col}</span>
+                                                        ))}
+                                                        {(a.columns || []).length > 4 && <span className="text-xs text-gray-400">+{(a.columns || []).length - 4} more</span>}
+                                                    </div>
+                                                    <p className="text-xs text-gray-400 mt-2">{new Date(a.createdAt).toLocaleDateString()}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* One-Time Broadcast Page */}
                             {activeSection === 'one-time-broadcast' && oneTimeBroadcastAllowed && (
                                 <div>
-                                    <h1 className="text-2xl font-bold text-gray-900 mb-8">One-Time Broadcast</h1>
-                                    <div className="bg-white p-6 rounded-lg shadow-sm">
-                                        <div className="text-center py-12">
-                                            <FiMail className="text-gray-300 text-5xl mx-auto mb-4" />
-                                            <p className="text-gray-600 font-semibold">No broadcasts created yet</p>
-                                            <p className="text-gray-500 mb-4">Create your first broadcast from the dashboard.</p>
-                                        </div>
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h1 className="text-2xl font-bold text-gray-900">One-Time Broadcasts</h1>
+                                        <button onClick={() => { setEditingBroadcast(null); setIsBroadcastModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm" style={{ backgroundColor: settings.themeColor }}>
+                                            <FiPlus /> New Broadcast
+                                        </button>
                                     </div>
+                                    {broadcastsLoading ? <p className="text-center p-8 text-gray-500">Loading…</p> : broadcasts.length === 0 ? (
+                                        <div className="bg-white rounded-lg p-12 text-center shadow-sm">
+                                            <FiMail className="text-gray-300 text-5xl mx-auto mb-4" />
+                                            <p className="text-gray-600 font-semibold">No broadcasts yet</p>
+                                            <p className="text-gray-500 text-sm mt-1">Click "New Broadcast" to schedule one.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {broadcasts.map(b => (
+                                                <div key={b.broadcastId} className="bg-white rounded-lg border p-5 hover:shadow-md transition">
+                                                    <div className="flex items-start justify-between mb-2">
+                                                        <h3 className="font-semibold text-gray-900 truncate">{b.name}</h3>
+                                                        <span className={`text-xs px-2 py-0.5 rounded-full ml-2 shrink-0 ${b.status === 'sent' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{b.status}</span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-500 truncate">📧 {templates.find(t => t.templateId === b.templateId)?.name || '—'}</p>
+                                                    <p className="text-xs text-gray-400 mt-1">📅 {b.sendDate} at {b.sendTime} IST</p>
+                                                    {b.status === 'pending' && (
+                                                        <button onClick={() => { setEditingBroadcast(b); setIsBroadcastModalOpen(true); }} className="mt-3 text-xs px-3 py-1 rounded text-white" style={{ backgroundColor: settings.themeColor }}>Edit</button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
                             {/* Date-Based Automation Page */}
                             {activeSection === 'date-based-automation' && dateBasedAutomationAllowed && (
                                 <div>
-                                    <h1 className="text-2xl font-bold text-gray-900 mb-8">Date-Based Automation</h1>
-                                    <div className="bg-white p-6 rounded-lg shadow-sm">
-                                        <div className="text-center py-12">
-                                            <FiRefreshCw className="text-gray-300 text-5xl mx-auto mb-4" />
-                                            <p className="text-gray-600 font-semibold">No automations created yet</p>
-                                            <p className="text-gray-500 mb-4">Create your first automation from the dashboard.</p>
-                                        </div>
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h1 className="text-2xl font-bold text-gray-900">Date-Based Automations</h1>
+                                        <button onClick={() => { setEditingAutomation(null); setIsDateAutomationModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm" style={{ backgroundColor: settings.themeColor }}>
+                                            <FiPlus /> New Automation
+                                        </button>
                                     </div>
+                                    {automationsLoading ? <p className="text-center p-8 text-gray-500">Loading…</p> : automations.length === 0 ? (
+                                        <div className="bg-white rounded-lg p-12 text-center shadow-sm">
+                                            <FiCalendar className="text-gray-300 text-5xl mx-auto mb-4" />
+                                            <p className="text-gray-600 font-semibold">No automations yet</p>
+                                            <p className="text-gray-500 text-sm mt-1">Click "New Automation" to create one.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {automations.map(a => (
+                                                <div key={a.automationId} className="bg-white rounded-lg border p-5 hover:shadow-md transition">
+                                                    <div className="flex items-start justify-between mb-2">
+                                                        <h3 className="font-semibold text-gray-900 truncate">{a.name}</h3>
+                                                        <span className={`text-xs px-2 py-0.5 rounded-full ml-2 shrink-0 ${a.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{a.isActive ? 'Active' : 'Paused'}</span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-500 truncate">📧 {templates.find(t => t.templateId === a.templateId)?.name || '—'}</p>
+                                                    <p className="text-xs text-gray-400 mt-1">📅 {a.scheduledDates?.length ?? 0} date{a.scheduledDates?.length !== 1 ? 's' : ''} scheduled</p>
+                                                    <p className="text-xs text-gray-400">✓ {a.sentDates?.length ?? 0} sent</p>
+                                                    <button onClick={() => { setEditingAutomation(a); setIsDateAutomationModalOpen(true); }} className="mt-3 text-xs px-3 py-1 rounded text-white" style={{ backgroundColor: settings.themeColor }}>Edit</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -846,7 +970,7 @@ export default function DashboardPage() {
                                 (activeSection === 'campaigns' && !campaignAllowed) ||
                                 (activeSection === 'one-time-broadcast' && !oneTimeBroadcastAllowed) ||
                                 (activeSection === 'date-based-automation' && !dateBasedAutomationAllowed)) &&
-                                (emailTemplateAllowed || campaignAllowed || emailLogsAllowed || oneTimeBroadcastAllowed || dateBasedAutomationAllowed) && (
+                                (emailTemplateAllowed || campaignAllowed || emailLogsAllowed || oneTimeBroadcastAllowed || dateBasedAutomationAllowed || true) && (
                                     <div className="flex items-center justify-center h-96">
                                         <div className="text-center">
                                             <div className="mx-auto w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
@@ -866,7 +990,7 @@ export default function DashboardPage() {
                 {/* Modals */}
                 {campaignAllowed && (
                     <>
-                        <CampaignForm isOpen={isCampaignFormOpen} onClose={handleCloseForm} onSubmit={handleFormSubmit} editCampaign={editingCampaign} />
+                        <CampaignForm isOpen={isCampaignFormOpen} onClose={handleCloseForm} onSubmit={handleFormSubmit} editCampaign={editingCampaign} onToggleSentToday={handleToggleSentToday} />
 
                         {campaignToDelete && (
                             <DeleteConfirmationModal
@@ -877,11 +1001,11 @@ export default function DashboardPage() {
                         )}
                         {/* ADD THIS NEW BLOCK */}
                         {viewingCampaign && (
-                            <TemplatePreviewModal 
-                                campaign={viewingCampaign} 
-                                onClose={handleCloseTemplate} 
+                            <TemplatePreviewModal
+                                campaign={viewingCampaign}
+                                onClose={handleCloseTemplate}
                             />
-                        )}                        
+                        )}
                     </>
                 )}
 
@@ -902,6 +1026,31 @@ export default function DashboardPage() {
                         )}
                     </>
                 )}
+
+                {/* New feature modals */}
+                <TemplateModal
+                    isOpen={isTemplateModalOpen}
+                    onClose={() => setIsTemplateModalOpen(false)}
+                    onSaved={() => setTemplatesTrigger(p => p + 1)}
+                    editTemplate={editingTemplate}
+                />
+                <AudienceModal
+                    isOpen={isAudienceModalOpen}
+                    onClose={() => setIsAudienceModalOpen(false)}
+                    onSaved={() => setAudiencesTrigger(p => p + 1)}
+                />
+                <BroadcastModal
+                    isOpen={isBroadcastModalOpen}
+                    onClose={() => setIsBroadcastModalOpen(false)}
+                    onSaved={() => setBroadcastsTrigger(p => p + 1)}
+                    editBroadcast={editingBroadcast}
+                />
+                <DateAutomationModal
+                    isOpen={isDateAutomationModalOpen}
+                    onClose={() => setIsDateAutomationModalOpen(false)}
+                    onSaved={() => setAutomationsTrigger(p => p + 1)}
+                    editAutomation={editingAutomation}
+                />
             </div>
         </ProtectedRoute>
     );
@@ -1195,6 +1344,25 @@ const DeleteAllLogsModal = ({ onConfirm, onClose }: DeleteAllLogsModalProps) => 
                     Delete All
                 </button>
             </div>
+        </div>
+    </div>
+);
+
+// Quick Create Card helper
+const QuickCreateCard = ({ icon, title, desc, btnLabel, themeColor, onClick }: { icon: React.ReactNode; title: string; desc: string; btnLabel: string; themeColor: string; onClick: () => void }) => (
+    <div
+        onClick={onClick}
+        className="bg-white p-6 rounded-lg shadow-sm border-2 border-gray-200 cursor-pointer transition-all"
+        onMouseEnter={(e) => e.currentTarget.style.borderColor = themeColor}
+        onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}
+    >
+        <div className="flex flex-col items-center text-center">
+            <div className="p-4 rounded-full mb-4" style={{ backgroundColor: `${themeColor}20` }}>
+                <span style={{ color: themeColor }} className="text-2xl">{icon}</span>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
+            <p className="text-sm text-gray-600 mb-4">{desc}</p>
+            <button className="px-4 py-2 text-white rounded-lg hover:opacity-90 transition text-sm" style={{ backgroundColor: themeColor }}>{btnLabel}</button>
         </div>
     </div>
 );

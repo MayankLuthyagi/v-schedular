@@ -13,16 +13,42 @@ export default function AdminProtectedRoute({ children }: AdminProtectedRoutePro
     const router = useRouter();
 
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const isLoggedIn = localStorage.getItem('isAdminLoggedIn');
-            const adminUser = localStorage.getItem('adminUser');
+        const verifyAdmin = async () => {
+            const token = localStorage.getItem('adminToken');
 
-            if (isLoggedIn === 'true' && adminUser) {
-                setIsAdminAuthenticated(true);
-            } else {
+            if (!token) {
+                setIsAdminAuthenticated(false);
+                setIsLoading(false);
                 router.push('/admin/login');
+                return;
             }
-            setIsLoading(false);
+
+            try {
+                const response = await fetch('/api/auth/verify?role=admin', {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
+                });
+
+                if (response.ok) {
+                    setIsAdminAuthenticated(true);
+                } else {
+                    localStorage.removeItem('adminToken');
+                    localStorage.removeItem('adminProfile');
+                    setIsAdminAuthenticated(false);
+                    router.push('/admin/login');
+                }
+            } catch (error) {
+                console.error('Admin token verification failed:', error);
+                setIsAdminAuthenticated(false);
+                router.push('/admin/login');
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        if (typeof window !== 'undefined') {
+            verifyAdmin();
         }
     }, [router]);
 

@@ -18,6 +18,7 @@ interface AuthUser {
     _id: string;
     name: string;
     email: string;
+    password?: string;
     createdAt: string; // Assuming your API returns this
 }
 
@@ -42,7 +43,7 @@ export default function AdminDashboardPage() {
     const [isEmailModalOpen, setEmailModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<AuthUser | null>(null);
     const [editingEmail, setEditingEmail] = useState<AuthEmail | null>(null);
-    const [userForm, setUserForm] = useState({ name: '', email: '' });
+    const [userForm, setUserForm] = useState({ name: '', email: '', password: '' });
     const [emailForm, setEmailForm] = useState({ name: '', main: '', email: '', app_password: '' });
     const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'user' | 'email', id: string, email: string } | null>(null);
 
@@ -65,13 +66,13 @@ export default function AdminDashboardPage() {
     // User management handlers
     const handleAddUser = () => {
         setEditingUser(null);
-        setUserForm({ name: '', email: '' });
+        setUserForm({ name: '', email: '', password: '' });
         setUserModalOpen(true);
     };
 
     const handleEditUser = (user: AuthUser) => {
         setEditingUser(user);
-        setUserForm({ name: user.name, email: user.email });
+        setUserForm({ name: user.name, email: user.email, password: '' });
         setUserModalOpen(true);
     };
 
@@ -443,8 +444,8 @@ export default function AdminDashboardPage() {
                     <div
                         key={toast.id}
                         className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-right-full duration-300 ${toast.type === 'success'
-                                ? 'bg-green-500 text-white'
-                                : 'bg-red-500 text-white'
+                            ? 'bg-green-500 text-white'
+                            : 'bg-red-500 text-white'
                             }`}
                     >
                         {toast.type === 'success' ? (
@@ -471,8 +472,8 @@ interface UserModalProps {
     isOpen: boolean;
     onClose: () => void;
     onSubmit: () => void;
-    userForm: { name: string; email: string };
-    setUserForm: (form: { name: string; email: string }) => void;
+    userForm: { name: string; email: string; password: string };
+    setUserForm: (form: { name: string; email: string; password: string }) => void;
     editingUser: AuthUser | null;
     isSubmitting: boolean;
 }
@@ -526,6 +527,21 @@ const UserModal = ({ isOpen, onClose, onSubmit, userForm, setUserForm, editingUs
                             className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                             placeholder="Enter email address"
                             required
+                            disabled={isSubmitting}
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="userPassword" className="block text-sm font-medium text-black mb-2">
+                            Password {editingUser ? '(leave empty to keep current)' : ''}
+                        </label>
+                        <input
+                            id="userPassword"
+                            type="password"
+                            value={userForm.password}
+                            onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                            className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                            placeholder={editingUser ? 'Enter new password (optional)' : 'Enter password'}
+                            required={!editingUser}
                             disabled={isSubmitting}
                         />
                     </div>

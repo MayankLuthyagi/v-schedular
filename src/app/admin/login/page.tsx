@@ -46,9 +46,9 @@ export default function AdminLoginPage() {
 
             if (data.success) {
                 console.log('Login successful, redirecting to /admin');
-                // Store admin info in localStorage
-                localStorage.setItem('adminUser', JSON.stringify(data.admin));
-                localStorage.setItem('isAdminLoggedIn', 'true');
+                // Store admin JWT and profile for protected admin routes
+                localStorage.setItem('adminToken', data.token);
+                localStorage.setItem('adminProfile', JSON.stringify(data.admin));
 
                 // Redirect to admin dashboard
                 router.push('/admin');

@@ -10,15 +10,15 @@ const Header = () => {
     const router = useRouter();
 
     useEffect(() => {
-        const adminData = localStorage.getItem('adminUser');
+        const adminData = localStorage.getItem('adminProfile');
         if (adminData) {
             setAdminUsername(JSON.parse(adminData).username);
         }
     }, []);
 
     const handleLogout = () => {
-        localStorage.removeItem('adminUser');
-        localStorage.removeItem('isAdminLoggedIn');
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminProfile');
         router.push('/admin/login');
     };
 

@@ -44,6 +44,10 @@ export async function GET(
             return addCorsHeaders(response);
         }
 
+        if (user) {
+            delete user.password;
+        }
+
         const response = NextResponse.json({ success: true, user });
         return addCorsHeaders(response);
     } catch (error) {
@@ -62,7 +66,7 @@ export async function PUT(
 ) {
     try {
         const body = await request.json();
-        const { email, name } = body;
+        const { email, name, password } = body;
         const { id } = await params;
 
         if (!email || !name) {
@@ -105,7 +109,11 @@ export async function PUT(
             email,
             name,
             updatedAt: new Date(),
-        };
+        } as { email: string; name: string; updatedAt: Date; password?: string };
+
+        if (password) {
+            updateData.password = password;
+        }
 
         const result = await db.collection('AuthUsers').updateOne(
             { _id: objectId },
@@ -122,6 +130,9 @@ export async function PUT(
 
         // Get the updated user
         const updatedUser = await db.collection('AuthUsers').findOne({ _id: objectId });
+        if (updatedUser) {
+            delete updatedUser.password;
+        }
 
         const response = NextResponse.json({
             success: true,

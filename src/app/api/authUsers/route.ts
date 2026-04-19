@@ -18,7 +18,13 @@ export async function GET() {
         const { db } = await connectToDatabase();
         const users = await db.collection('AuthUsers').find({}).toArray();
 
-        const response = NextResponse.json({ success: true, users });
+        const sanitizedUsers = users.map((user) => {
+            const sanitizedUser = { ...user };
+            delete sanitizedUser.password;
+            return sanitizedUser;
+        });
+
+        const response = NextResponse.json({ success: true, users: sanitizedUsers });
         return addCorsHeaders(response);
     } catch (error) {
         console.error('Error fetching users:', error);
@@ -35,11 +41,11 @@ export async function GET() {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { email, name } = body;
+        const { email, name, password } = body;
 
-        if (!email || !name) {
+        if (!email || !name || !password) {
             return NextResponse.json(
-                { success: false, error: 'Email and name are required' },
+                { success: false, error: 'Email, name and password are required' },
                 { status: 400 }
             );
         }
@@ -58,15 +64,18 @@ export async function POST(request: NextRequest) {
         const newUser = {
             email,
             name,
+            password,
             createdAt: new Date(),
             updatedAt: new Date(),
         };
 
         const result = await db.collection('AuthUsers').insertOne(newUser);
+        const sanitizedUser = { ...newUser };
+        delete sanitizedUser.password;
 
         const response = NextResponse.json({
             success: true,
-            user: { ...newUser, _id: result.insertedId }
+            user: { ...sanitizedUser, _id: result.insertedId }
         });
         return addCorsHeaders(response);
     } catch (error) {

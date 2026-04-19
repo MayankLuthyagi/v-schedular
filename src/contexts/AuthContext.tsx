@@ -2,17 +2,25 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { User } from 'firebase/auth';
+
+interface AuthUser {
+    sub: string;
+    email: string;
+    name: string;
+    role: 'admin' | 'user';
+}
 
 interface AuthContextType {
-    user: User | null;
+    user: AuthUser | null;
     loading: boolean;
+    login: (token: string, user: AuthUser) => void;
     logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
     user: null,
     loading: true,
+    login: () => { },
     logout: async () => { },
 });
 
@@ -29,53 +37,58 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-    const [user, setUser] = useState<User | null>(null);
+    const [user, setUser] = useState<AuthUser | null>(null);
     const [loading, setLoading] = useState(true);
     const router = useRouter();
 
     useEffect(() => {
-        let unsubscribe: (() => void) | null = null;
+        const initAuth = async () => {
+            const token = localStorage.getItem('userToken');
 
-        async function initAuth() {
+            if (!token) {
+                setUser(null);
+                setLoading(false);
+                return;
+            }
+
             try {
-                // Lazy load Firebase auth
-                const { getFirebaseAuth } = await import('@/lib/firebase');
-                const { onAuthStateChanged } = await import('firebase/auth');
-
-                const auth = await getFirebaseAuth();
-
-                unsubscribe = onAuthStateChanged(auth, (user) => {
-                    setUser(user);
-                    setLoading(false);
+                const response = await fetch('/api/auth/verify?role=user', {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
                 });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    setUser(data.user as AuthUser);
+                } else {
+                    localStorage.removeItem('userToken');
+                    localStorage.removeItem('userProfile');
+                    setUser(null);
+                }
             } catch (error) {
                 console.error('Error initializing auth:', error);
+                setUser(null);
+            } finally {
                 setLoading(false);
             }
-        }
+        };
 
         initAuth();
-
-        return () => {
-            if (unsubscribe) {
-                unsubscribe();
-            }
-        };
     }, []);
+
+    const login = (token: string, userData: AuthUser) => {
+        localStorage.setItem('userToken', token);
+        localStorage.setItem('userProfile', JSON.stringify(userData));
+        setUser(userData);
+    };
 
     const logout = async () => {
         try {
-            // Lazy load Firebase auth for logout
-            const { getFirebaseAuth } = await import('@/lib/firebase');
-            const { signOut } = await import('firebase/auth');
-
-            const auth = await getFirebaseAuth();
-            await signOut(auth);
-
-            // Clear local storage
-            localStorage.removeItem('userEmail');
-            localStorage.removeItem('userName');
-            localStorage.removeItem('userPhoto');
+            localStorage.removeItem('userToken');
+            localStorage.removeItem('userProfile');
+            setUser(null);
 
             router.push('/login');
         } catch (error) {
@@ -86,6 +99,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const value = {
         user,
         loading,
+        login,
         logout,
     };
 
