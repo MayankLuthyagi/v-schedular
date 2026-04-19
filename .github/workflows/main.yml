@@ -2,8 +2,8 @@ name: Send Mail Scheduler (IST)
 
 on:
   schedule:
-    # Every 20 minutes between 7 AM and 7 PM IST (1:30 AM–9:30 AM UTC)
-    - cron: "*/20 1-13 * * *"
+    # Every 20 minutes, 24 hours a day
+    - cron: "*/20 * * * *"
   workflow_dispatch: # allow manual run too
 
 # Prevent overlapping runs
