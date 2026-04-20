@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { HiArrowLeft, HiRefresh, HiEye, HiX, HiChevronLeft, HiChevronRight } from "react-icons/hi";
+import { HiArrowLeft, HiRefresh, HiChevronLeft, HiChevronRight } from "react-icons/hi";
+import { FiX } from "react-icons/fi";
+import ViewIconButton from '@/components/ViewIconButton';
 
 // --- Types (from your original code) ---
 interface EmailLog {
@@ -183,7 +185,7 @@ export default function EmailLogsPage() {
                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{log.senderEmail}</td>
                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{new Date(log.sentAt).toLocaleString()}</td>
                                                 <td className="px-6 py-4 whitespace-nowrap">
-                                                    <button onClick={() => setSelectedLog(log)} className="text-blue-600 hover:text-blue-900"><HiEye /></button>
+                                                    <ViewIconButton onClick={() => setSelectedLog(log)} label="View Details" />
                                                 </td>
                                             </tr>
                                         ))}
@@ -259,7 +261,7 @@ const DetailModal = ({ log, onClose, onMarkAsBounced }: DetailModalProps) => (
         <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
             <div className="p-4 border-b flex justify-between items-center">
                 <h3 className="text-lg font-medium">Log Details</h3>
-                <button onClick={onClose}><HiX /></button>
+                <button onClick={onClose}><FiX /></button>
             </div>
             <div className="p-6 space-y-4 text-sm">
                 <div className="grid grid-cols-3 gap-4">
@@ -325,7 +327,7 @@ const BounceModal = ({ log, onClose, onConfirm }: BounceModalProps) => {
             <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
                 <div className="p-4 border-b flex justify-between items-center">
                     <h3 className="text-lg font-medium">Mark as Bounced</h3>
-                    <button onClick={onClose}><HiX /></button>
+                    <button onClick={onClose}><FiX /></button>
                 </div>
                 <div className="p-6 space-y-4">
                     <p className="text-sm">You are marking <strong>{log.recipientEmail}</strong> as bounced. This will add them to the suppression list.</p>

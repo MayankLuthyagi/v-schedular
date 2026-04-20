@@ -139,6 +139,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
         }
         setShowDeleteConfirm(false);
         setSentTodayToggle(editCampaign ? isTodaySent(editCampaign.todaySent) : false);
+        setActiveTab('content');
     }, [editCampaign, reset, defaultValues]);
 
     useEffect(() => {

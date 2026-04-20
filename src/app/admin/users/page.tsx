@@ -1,7 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import ToastViewport from '@/components/ToastViewport';
+import EditIconButton from '@/components/EditIconButton';
+import { useTheme } from '@/contexts/ThemeContext';
+import { useToast } from '@/hooks/useToast';
 import { HiArrowLeft, HiUserAdd } from "react-icons/hi";
 interface User {
     _id: string;
@@ -21,10 +25,33 @@ export default function ManageUsersPage() {
     const [showEditModal, setShowEditModal] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [updatingUser, setUpdatingUser] = useState(false);
+    const { settings } = useTheme();
+    const { toasts, showToast, dismissToast } = useToast();
+
+    const fetchUsers = useCallback(async () => {
+        try {
+            setLoading(true);
+            const response = await fetch('/api/authUsers');
+            const data = await response.json();
+
+            if (data.success) {
+                setUsers(data.users);
+            } else {
+                setError(data.error || 'Failed to fetch users');
+                showToast(data.error || 'Failed to fetch users', 'error', 'Unable to load users');
+            }
+        } catch (err) {
+            setError('Failed to fetch users');
+            console.error('Error fetching users:', err);
+            showToast('Failed to fetch users', 'error', 'Unable to load users');
+        } finally {
+            setLoading(false);
+        }
+    }, [showToast]);
 
     useEffect(() => {
         fetchUsers();
-    }, []);
+    }, [fetchUsers]);
 
     useEffect(() => {
         const handleEscape = (e: KeyboardEvent) => {
@@ -59,12 +86,15 @@ export default function ManageUsersPage() {
 
             if (data.success) {
                 setUsers(users.filter(user => user._id !== id));
+                showToast('The user has been deleted successfully.', 'success', 'User deleted');
             } else {
                 setError(data.error || 'Failed to delete user');
+                showToast(data.error || 'Failed to delete user', 'error', 'Delete failed');
             }
         } catch (err) {
             setError('Failed to delete users');
             console.error('Error deleting users:', err);
+            showToast('Failed to delete user', 'error', 'Delete failed');
         } finally {
             setLoading(false);
         }
@@ -105,33 +135,17 @@ export default function ManageUsersPage() {
                 ));
                 setEditingUser(null);
                 setShowEditModal(false);
+                showToast('User details were updated successfully.', 'success', 'User updated');
             } else {
                 setError(data.error || 'Failed to update user');
+                showToast(data.error || 'Failed to update user', 'error', 'User not saved');
             }
         } catch (err) {
             setError('Failed to update user');
             console.error('Error updating user:', err);
+            showToast('Failed to update user', 'error', 'User not saved');
         } finally {
             setUpdatingUser(false);
-        }
-    };
-
-    const fetchUsers = async () => {
-        try {
-            setLoading(true);
-            const response = await fetch('/api/authUsers');
-            const data = await response.json();
-
-            if (data.success) {
-                setUsers(data.users);
-            } else {
-                setError(data.error || 'Failed to fetch users');
-            }
-        } catch (err) {
-            setError('Failed to fetch users');
-            console.error('Error fetching users:', err);
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -155,12 +169,15 @@ export default function ManageUsersPage() {
                 setUsers([...users, data.user]);
                 setNewUser({ email: '', name: '' });
                 setShowAddModal(false);
+                showToast('The new user has been added successfully.', 'success', 'User added');
             } else {
                 setError(data.error || 'Failed to add user');
+                showToast(data.error || 'Failed to add user', 'error', 'User not saved');
             }
         } catch (err) {
             setError('Failed to add user');
             console.error('Error adding user:', err);
+            showToast('Failed to add user', 'error', 'User not saved');
         } finally {
             setAddingUser(false);
         }
@@ -168,6 +185,7 @@ export default function ManageUsersPage() {
 
     return (
         <div className="min-h-screen bg-gray-100 p-6">
+            <ToastViewport toasts={toasts} onDismiss={dismissToast} themeColor={settings.themeColor} />
             <div className="max-w-7xl mx-auto">
                 <div className="bg-white rounded-lg shadow-lg p-8">
                     {/* Header */}
@@ -423,12 +441,12 @@ export default function ManageUsersPage() {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                                <button
-                                                    onClick={() => handleEditUser(user)}
-                                                    className="text-blue-600 hover:text-blue-900 mr-4 cursor-pointer"
-                                                >
-                                                    Edit
-                                                </button>
+                                                <span className="mr-4 inline-flex">
+                                                    <EditIconButton
+                                                        onClick={() => handleEditUser(user)}
+                                                        themeColor={settings.themeColor}
+                                                    />
+                                                </span>
                                                 <button onClick={() => deleteUser(user._id)} className="text-red-600 hover:text-red-900 cursor-pointer">
                                                     Delete
                                                 </button>

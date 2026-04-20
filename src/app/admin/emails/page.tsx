@@ -1,7 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import ToastViewport from '@/components/ToastViewport';
+import EditIconButton from '@/components/EditIconButton';
+import { useTheme } from '@/contexts/ThemeContext';
+import { useToast } from '@/hooks/useToast';
 import { HiPlus, HiArrowLeft } from "react-icons/hi";
 interface Email {
     _id: string;
@@ -23,10 +27,33 @@ export default function ManageEmailPage() {
     const [showEditModal, setShowEditModal] = useState(false);
     const [editingEmail, setEditingEmail] = useState<Email | null>(null);
     const [updatingEmail, setUpdatingEmail] = useState(false);
+    const { settings } = useTheme();
+    const { toasts, showToast, dismissToast } = useToast();
+
+    const fetchemails = useCallback(async () => {
+        try {
+            setLoading(true);
+            const response = await fetch('/api/authEmails');
+            const data = await response.json();
+
+            if (data.success) {
+                setEmails(data.emails);
+            } else {
+                setError(data.error || 'Failed to fetch emails');
+                showToast(data.error || 'Failed to fetch emails', 'error', 'Unable to load emails');
+            }
+        } catch (err) {
+            setError('Failed to fetch emails');
+            console.error('Error fetching emails:', err);
+            showToast('Failed to fetch emails', 'error', 'Unable to load emails');
+        } finally {
+            setLoading(false);
+        }
+    }, [showToast]);
 
     useEffect(() => {
         fetchemails();
-    }, []);
+    }, [fetchemails]);
 
     useEffect(() => {
         const handleEscape = (e: KeyboardEvent) => {
@@ -46,25 +73,6 @@ export default function ManageEmailPage() {
         document.addEventListener('keydown', handleEscape);
         return () => document.removeEventListener('keydown', handleEscape);
     }, [showAddModal, showEditModal]);
-
-    const fetchemails = async () => {
-        try {
-            setLoading(true);
-            const response = await fetch('/api/authEmails');
-            const data = await response.json();
-
-            if (data.success) {
-                setEmails(data.emails);
-            } else {
-                setError(data.error || 'Failed to fetch emails');
-            }
-        } catch (err) {
-            setError('Failed to fetch emails');
-            console.error('Error fetching emails:', err);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleAddEmail = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -86,12 +94,15 @@ export default function ManageEmailPage() {
                 setEmails([...emails, data.email]);
                 setNewEmail({ email: '', name: '', main: '', app_password: '' });
                 setShowAddModal(false);
+                showToast('The sender email has been added successfully.', 'success', 'Email added');
             } else {
                 setError(data.error || 'Failed to add email');
+                showToast(data.error || 'Failed to add email', 'error', 'Email not saved');
             }
         } catch (err) {
             setError('Failed to add email');
             console.error('Error adding email:', err);
+            showToast('Failed to add email', 'error', 'Email not saved');
         } finally {
             setAddingEmail(false);
         }
@@ -134,12 +145,15 @@ export default function ManageEmailPage() {
                 ));
                 setEditingEmail(null);
                 setShowEditModal(false);
+                showToast('Sender email details were updated successfully.', 'success', 'Email updated');
             } else {
                 setError(data.error || 'Failed to update email');
+                showToast(data.error || 'Failed to update email', 'error', 'Email not saved');
             }
         } catch (err) {
             setError('Failed to update email');
             console.error('Error updating email:', err);
+            showToast('Failed to update email', 'error', 'Email not saved');
         } finally {
             setUpdatingEmail(false);
         }
@@ -159,12 +173,15 @@ export default function ManageEmailPage() {
 
             if (data.success) {
                 setEmails(emails.filter(email => email._id !== id));
+                showToast('The sender email has been deleted successfully.', 'success', 'Email deleted');
             } else {
                 setError(data.error || 'Failed to delete email');
+                showToast(data.error || 'Failed to delete email', 'error', 'Delete failed');
             }
         } catch (err) {
             setError('Failed to delete email');
             console.error('Error deleting email:', err);
+            showToast('Failed to delete email', 'error', 'Delete failed');
         } finally {
             setLoading(false);
         }
@@ -172,6 +189,7 @@ export default function ManageEmailPage() {
 
     return (
         <div className="min-h-screen bg-gray-100 p-6">
+            <ToastViewport toasts={toasts} onDismiss={dismissToast} themeColor={settings.themeColor} />
             <div className="max-w-7xl mx-auto">
                 <div className="bg-white rounded-lg shadow-lg p-8">
                     {/* Header */}
@@ -500,12 +518,12 @@ export default function ManageEmailPage() {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                                <button
-                                                    onClick={() => handleEditEmail(email)}
-                                                    className="text-blue-600 hover:text-blue-900 mr-4"
-                                                >
-                                                    Edit
-                                                </button>
+                                                <span className="mr-4 inline-flex">
+                                                    <EditIconButton
+                                                        onClick={() => handleEditEmail(email)}
+                                                        themeColor={settings.themeColor}
+                                                    />
+                                                </span>
                                                 <button
                                                     onClick={() => deleteEmail(email._id)}
                                                     className="text-red-600 hover:text-red-900"

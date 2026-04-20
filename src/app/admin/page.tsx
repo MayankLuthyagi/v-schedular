@@ -5,14 +5,12 @@ import AdminProtectedRoute from '@/components/AdminProtectedRoute';
 import DashboardLayout from '@/components/admin/DashboardLayout';
 import SkeletonLoader from '@/components/admin/SkeletonLoader';
 import StatCard from '@/components/admin/StatCard';
+import ToastViewport from '@/components/ToastViewport';
+import EditIconButton from '@/components/EditIconButton';
+import DeleteIconButton from '@/components/DeleteIconButton';
 import { useTheme } from '@/contexts/ThemeContext';
-import { FiUsers, FiMail, FiX, FiAlertCircle, FiEdit, FiTrash2, FiPlus, FiCheckCircle, FiXCircle } from 'react-icons/fi';
-
-interface Toast {
-    id: number;
-    message: string;
-    type: 'success' | 'error';
-}
+import { useToast } from '@/hooks/useToast';
+import { FiUsers, FiMail, FiX, FiAlertCircle, FiPlus } from 'react-icons/fi';
 
 interface AuthUser {
     _id: string;
@@ -37,6 +35,7 @@ export default function AdminDashboardPage() {
     const [loading, setLoading] = useState(true);
     const [activeSection, setActiveSection] = useState<'users' | 'emails'>('users');
     const { settings } = useTheme();
+    const { toasts, showToast, dismissToast } = useToast();
 
     // User management modal states
     const [isUserModalOpen, setUserModalOpen] = useState(false);
@@ -51,17 +50,6 @@ export default function AdminDashboardPage() {
     const [isUserSubmitting, setIsUserSubmitting] = useState(false);
     const [isEmailSubmitting, setIsEmailSubmitting] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
-
-    // Toast notifications
-    const [toasts, setToasts] = useState<Toast[]>([]);
-
-    const showToast = (message: string, type: 'success' | 'error') => {
-        const id = Date.now();
-        setToasts(prev => [...prev, { id, message, type }]);
-        setTimeout(() => {
-            setToasts(prev => prev.filter(toast => toast.id !== id));
-        }, 5000);
-    };
 
     // User management handlers
     const handleAddUser = () => {
@@ -114,10 +102,14 @@ export default function AdminDashboardPage() {
             // Refresh users list
             fetchData();
             setUserModalOpen(false);
-            showToast(editingUser ? 'User updated successfully!' : 'User added successfully!', 'success');
+            showToast(
+                editingUser ? 'User details were updated successfully.' : 'The new user has been added successfully.',
+                'success',
+                editingUser ? 'User updated' : 'User added'
+            );
         } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : 'An error occurred';
-            showToast(errorMessage, 'error');
+            showToast(errorMessage, 'error', 'User not saved');
         } finally {
             setIsUserSubmitting(false);
         }
@@ -141,10 +133,14 @@ export default function AdminDashboardPage() {
             // Refresh emails list
             fetchData();
             setEmailModalOpen(false);
-            showToast(editingEmail ? 'Email updated successfully!' : 'Email added successfully!', 'success');
+            showToast(
+                editingEmail ? 'Sender email details were updated successfully.' : 'The sender email has been added successfully.',
+                'success',
+                editingEmail ? 'Email updated' : 'Email added'
+            );
         } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : 'An error occurred';
-            showToast(errorMessage, 'error');
+            showToast(errorMessage, 'error', 'Email not saved');
         } finally {
             setIsEmailSubmitting(false);
         }
@@ -167,10 +163,14 @@ export default function AdminDashboardPage() {
             // Refresh data
             fetchData();
             setDeleteConfirm(null);
-            showToast(`${deleteConfirm.type === 'user' ? 'User' : 'Email'} deleted successfully!`, 'success');
+            showToast(
+                `${deleteConfirm.type === 'user' ? 'User' : 'Email'} was deleted successfully.`,
+                'success',
+                `${deleteConfirm.type === 'user' ? 'User' : 'Email'} deleted`
+            );
         } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : 'An error occurred';
-            showToast(errorMessage, 'error');
+            showToast(errorMessage, 'error', 'Delete failed');
         } finally {
             setIsDeleting(false);
         }
@@ -312,20 +312,14 @@ export default function AdminDashboardPage() {
                                                             </td>
                                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                                                 <div className="flex items-center space-x-4">
-                                                                    <button
+                                                                    <EditIconButton
                                                                         onClick={() => handleEditUser(user)}
-                                                                        className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 cursor-pointer"
-                                                                        title="Edit user"
-                                                                    >
-                                                                        <FiEdit className="w-4 h-4" />
-                                                                    </button>
-                                                                    <button
+                                                                        themeColor={settings.themeColor}
+                                                                    />
+                                                                    <DeleteIconButton
                                                                         onClick={() => handleDeleteUser(user)}
-                                                                        className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 cursor-pointer"
-                                                                        title="Delete user"
-                                                                    >
-                                                                        <FiTrash2 className="w-4 h-4" />
-                                                                    </button>
+                                                                        label="Delete user"
+                                                                    />
                                                                 </div>
                                                             </td>
                                                         </tr>
@@ -382,20 +376,14 @@ export default function AdminDashboardPage() {
                                                             </td>
                                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                                                 <div className="flex items-center space-x-4">
-                                                                    <button
+                                                                    <EditIconButton
                                                                         onClick={() => handleEditEmail(email)}
-                                                                        className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 cursor-pointer"
-                                                                        title="Edit email"
-                                                                    >
-                                                                        <FiEdit className="w-4 h-4" />
-                                                                    </button>
-                                                                    <button
+                                                                        themeColor={settings.themeColor}
+                                                                    />
+                                                                    <DeleteIconButton
                                                                         onClick={() => handleDeleteEmail(email)}
-                                                                        className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 cursor-pointer"
-                                                                        title="Delete email"
-                                                                    >
-                                                                        <FiTrash2 className="w-4 h-4" />
-                                                                    </button>
+                                                                        label="Delete email"
+                                                                    />
                                                                 </div>
                                                             </td>
                                                         </tr>
@@ -438,31 +426,7 @@ export default function AdminDashboardPage() {
                 isDeleting={isDeleting}
             />
 
-            {/* Toast Notifications */}
-            <div className="fixed top-4 right-4 z-50 space-y-2">
-                {toasts.map((toast) => (
-                    <div
-                        key={toast.id}
-                        className={`px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-right-full duration-300 ${toast.type === 'success'
-                            ? 'bg-green-500 text-white'
-                            : 'bg-red-500 text-white'
-                            }`}
-                    >
-                        {toast.type === 'success' ? (
-                            <FiCheckCircle className="h-5 w-5" />
-                        ) : (
-                            <FiXCircle className="h-5 w-5" />
-                        )}
-                        <span className="text-sm font-medium">{toast.message}</span>
-                        <button
-                            onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
-                            className="ml-2 text-white hover:text-gray-200 transition-colors"
-                        >
-                            <FiX className="h-4 w-4" />
-                        </button>
-                    </div>
-                ))}
-            </div>
+            <ToastViewport toasts={toasts} onDismiss={dismissToast} themeColor={settings.themeColor} />
         </AdminProtectedRoute>
     );
 }

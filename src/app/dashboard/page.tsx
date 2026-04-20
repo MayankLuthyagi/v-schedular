@@ -24,10 +24,16 @@ import { useTheme, useFeatureAllowed } from '@/contexts/ThemeContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import CampaignForm from '@/components/CampaignForm';
 import TemplateModal from '@/components/TemplateModal';
+import EmailTemplatePreviewModal from '@/components/EmailTemplatePreviewModal';
 import AudienceModal from '@/components/AudienceModal';
 import BroadcastModal from '@/components/BroadcastModal';
 import DateAutomationModal from '@/components/DateAutomationModal';
-import { FiMail, FiCheckCircle, FiAlertCircle, FiX, FiBarChart, FiEye, FiRefreshCw, FiUsers, FiCalendar, FiTrash2, FiPlus } from 'react-icons/fi';
+import ToastViewport from '@/components/ToastViewport';
+import EditIconButton from '@/components/EditIconButton';
+import DeleteIconButton from '@/components/DeleteIconButton';
+import ViewIconButton from '@/components/ViewIconButton';
+import { useToast } from '@/hooks/useToast';
+import { FiMail, FiAlertCircle, FiX, FiBarChart, FiEye, FiRefreshCw, FiUsers, FiCalendar, FiTrash2, FiPlus, FiDownload, FiLogOut } from 'react-icons/fi';
 import TemplatePreviewModal from '@/components/TemplatePreviewModal';
 // --- Data Fetching Hooks --------------------------------------------------
 
@@ -162,6 +168,7 @@ const useEmailLogs = () => {
     const [logs, setLogs] = useState<EmailLog[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [isExporting, setIsExporting] = useState(false);
 
     // State for filtering and pagination
     const [filter, setFilter] = useState<LogFilter>('today');
@@ -171,24 +178,27 @@ const useEmailLogs = () => {
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
 
+    const buildLogParams = useCallback((currentFilter: LogFilter, currentSearch: string, currentPage: number, currentCampaign?: string) => {
+        const params = new URLSearchParams();
+        if (currentFilter !== 'all') {
+            params.append('status', currentFilter);
+        }
+        if (currentSearch) {
+            params.append('search', currentSearch);
+        }
+        if (currentCampaign) {
+            params.append('campaignId', currentCampaign);
+        }
+        params.append('page', String(currentPage));
+        params.append('limit', '20');
+        return params;
+    }, []);
+
     const fetchLogs = useCallback(async (currentFilter: LogFilter, currentSearch: string, currentPage: number, currentCampaign?: string) => {
         setLoading(true);
         setError('');
         try {
-            // Construct URL with server-side filtering parameters
-            const params = new URLSearchParams();
-            if (currentFilter !== 'all') {
-                params.append('status', currentFilter);
-            }
-            if (currentSearch) {
-                params.append('search', currentSearch);
-            }
-            if (currentCampaign) {
-                params.append('campaignId', currentCampaign);
-            }
-            params.append('page', String(currentPage));
-            params.append('limit', '20'); // Example: 20 logs per page
-
+            const params = buildLogParams(currentFilter, currentSearch, currentPage, currentCampaign);
             const response = await fetch(`/api/emailLog?${params.toString()}`);
             const data = await response.json();
 
@@ -204,7 +214,7 @@ const useEmailLogs = () => {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [buildLogParams]);
 
     // Effect to refetch when filters change
     useEffect(() => {
@@ -231,14 +241,77 @@ const useEmailLogs = () => {
         }
     };
 
+    const exportLogs = async () => {
+        setIsExporting(true);
+        setError('');
+        try {
+            const params = buildLogParams(filter, searchTerm, 1, campaignFilter);
+            params.set('export', 'true');
+
+            const response = await fetch(`/api/emailLog?${params.toString()}`);
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to export logs.');
+            }
+
+            const logsToExport: EmailLog[] = data.logs || [];
+            if (logsToExport.length === 0) {
+                throw new Error('No email logs found for the selected filter.');
+            }
+
+            const XLSX = await import('xlsx');
+            const rows = logsToExport.map((log, index) => ({
+                No: index + 1,
+                Status: log.status,
+                'Recipient Email': log.recipientEmail,
+                'Sender Email': log.senderEmail,
+                'Campaign ID': log.campaignId,
+                'Send Method': log.sendMethod,
+                'Sent At': log.sentAt ? new Date(log.sentAt).toLocaleString() : '',
+                'Opened At': log.openedAt ? new Date(log.openedAt).toLocaleString() : '',
+                'Bounced At': log.bouncedAt ? new Date(log.bouncedAt).toLocaleString() : '',
+                'Failure Reason': log.failureReason || '',
+                'Failure Category': log.failureCategory || '',
+                'Bounce Reason': log.bounceReason || '',
+                'Bounce Category': log.bounceCategory || '',
+                'Original Error': log.originalError || '',
+                'Tracking User Agent': log.trackingData?.userAgent || '',
+                'Tracking Referer': log.trackingData?.referer || '',
+                'Tracking IP': log.trackingData?.ip || '',
+                'Tracking Time Diff (ms)': log.trackingData?.timeDiff ?? '',
+            }));
+
+            const worksheet = XLSX.utils.json_to_sheet(rows);
+            worksheet['!cols'] = [
+                { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 30 }, { wch: 36 }, { wch: 14 },
+                { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 30 }, { wch: 18 }, { wch: 30 },
+                { wch: 18 }, { wch: 40 }, { wch: 40 }, { wch: 30 }, { wch: 18 },
+            ];
+
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Email Logs');
+            const fileDate = new Date().toISOString().slice(0, 10);
+            XLSX.writeFile(workbook, `email-logs-${filter}-${fileDate}.xlsx`);
+
+            return { success: true, count: logsToExport.length };
+        } catch (err: unknown) {
+            return { success: false, error: err instanceof Error ? err.message : 'An error occurred' };
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     return {
         logs, loading, error,
         filter, setFilter,
         searchTerm, setSearchTerm,
         campaignFilter, setCampaignFilter,
         page, setPage, totalPages,
+        isExporting,
         refresh: () => fetchLogs(filter, searchTerm, page, campaignFilter),
         deleteAllLogs,
+        exportLogs,
     };
 };
 
@@ -285,33 +358,6 @@ const useDateAutomations = (trigger: number) => {
     return { automations, loading };
 };
 
-// --- UI Components --------------------------------------------------------
-
-type NotificationType = 'success' | 'error';
-interface NotificationState {
-    message: string;
-    type: NotificationType;
-}
-
-const Notification = ({ info, onDismiss, themeColor }: { info: NotificationState | null; onDismiss: () => void; themeColor: string }) => {
-    if (!info) return null;
-
-    const isSuccess = info.type === 'success';
-    const bgColor = isSuccess ? themeColor : '#ef4444'; // Use theme color for success, red for error
-    const Icon = isSuccess ? FiCheckCircle : FiAlertCircle;
-
-    return (
-        <div className="fixed top-5 right-5 z-50 flex items-center p-4 rounded-lg shadow-lg text-white" style={{ backgroundColor: bgColor }}>
-            <Icon className="w-6 h-6 mr-3" />
-            <p>{info.message}</p>
-            <button onClick={onDismiss} className="ml-4 p-1 rounded-full hover:bg-white/20">
-                <FiX className="w-5 h-5" />
-            </button>
-        </div>
-    );
-};
-
-
 // --- Main Dashboard Page Component ----------------------------------------
 
 export default function DashboardPage() {
@@ -324,12 +370,12 @@ export default function DashboardPage() {
     const campaignAllowed = useFeatureAllowed('campaign');
     const oneTimeBroadcastAllowed = useFeatureAllowed('oneTimeBroadcast');
     const dateBasedAutomationAllowed = useFeatureAllowed('dateBasedAutomation');
+    const { toasts, showToast, dismissToast } = useToast();
 
     // State for UI interactivity
     const [isCampaignFormOpen, setIsCampaignFormOpen] = useState(false);
     const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
     const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
-    const [notification, setNotification] = useState<NotificationState | null>(null);
     const [selectedLog, setSelectedLog] = useState<EmailLog | null>(null);
     const [isDeleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
 
@@ -345,7 +391,9 @@ export default function DashboardPage() {
     // Modal state for new features
     const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
+    const [viewingTemplate, setViewingTemplate] = useState<EmailTemplate | null>(null);
     const [isAudienceModalOpen, setIsAudienceModalOpen] = useState(false);
+    const [editingAudience, setEditingAudience] = useState<Audience | null>(null);
     const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
     const [editingBroadcast, setEditingBroadcast] = useState<Broadcast | null>(null);
     const [isDateAutomationModalOpen, setIsDateAutomationModalOpen] = useState(false);
@@ -354,7 +402,7 @@ export default function DashboardPage() {
     // Using our custom hooks
     const { campaigns, isLoading: campaignsLoading, addOrUpdateCampaign, deleteCampaign, refresh } = useCampaigns();
     const { stats, isLoading: statsLoading } = useDashboardStats();
-    const { logs, loading: logsLoading, error: logsError, filter, setFilter, searchTerm, setSearchTerm, campaignFilter, setCampaignFilter, page, setPage, totalPages, refresh: refreshLogs, deleteAllLogs } = useEmailLogs();
+    const { logs, loading: logsLoading, error: logsError, filter, setFilter, searchTerm, setSearchTerm, campaignFilter, setCampaignFilter, page, setPage, totalPages, isExporting, refresh: refreshLogs, deleteAllLogs, exportLogs } = useEmailLogs();
     const { templates, loading: templatesLoading } = useTemplates(templatesTrigger);
     const { audiences, loading: audiencesLoading } = useAudiences(audiencesTrigger);
     const { broadcasts, loading: broadcastsLoading } = useBroadcasts(broadcastsTrigger);
@@ -370,18 +418,17 @@ export default function DashboardPage() {
         );
     }
 
-    const showNotification = (message: string, type: NotificationType) => {
-        setNotification({ message, type });
-        setTimeout(() => setNotification(null), 5000); // Auto-dismiss after 5 seconds
-    };
-
     const handleFormSubmit = async (formData: CampaignFormData) => {
         const result = await addOrUpdateCampaign(formData, editingCampaign);
         if (result.success) {
-            showNotification(`Campaign ${editingCampaign ? 'updated' : 'created'} successfully!`, 'success');
+            showToast(
+                editingCampaign ? 'Your campaign changes have been saved.' : 'Your campaign is ready to go.',
+                'success',
+                editingCampaign ? 'Campaign updated' : 'Campaign created'
+            );
             handleCloseForm();
         } else {
-            showNotification(result.error || 'An unknown error occurred.', 'error');
+            showToast(result.error || 'We could not save this campaign.', 'error', 'Campaign not saved');
         }
     };
 
@@ -389,9 +436,9 @@ export default function DashboardPage() {
         if (!campaignToDelete) return;
         const result = await deleteCampaign(campaignToDelete.campaignId);
         if (result.success) {
-            showNotification('Campaign deleted successfully!', 'success');
+            showToast('The campaign was removed successfully.', 'success', 'Campaign deleted');
         } else {
-            showNotification(result.error || 'Failed to delete campaign.', 'error');
+            showToast(result.error || 'We could not delete this campaign.', 'error', 'Delete failed');
         }
         setCampaignToDelete(null); // Close modal
     };
@@ -411,12 +458,13 @@ export default function DashboardPage() {
             if (!response.ok) throw new Error('Failed to update');
             // Refresh campaign list so todaySent is up-to-date
             await refresh();
-            showNotification(
+            showToast(
                 markAsSent ? 'Campaign marked as already sent today.' : 'Campaign will resend today.',
-                'success'
+                'success',
+                'Campaign updated'
             );
         } catch {
-            showNotification('Failed to update sent status.', 'error');
+            showToast('Failed to update sent status.', 'error', 'Update failed');
         }
     };
 
@@ -451,17 +499,26 @@ export default function DashboardPage() {
     const handleDeleteAllConfirm = async () => {
         const result = await deleteAllLogs();
         if (result.success) {
-            showNotification('All email logs deleted successfully!', 'success');
+            showToast('All email logs were cleared successfully.', 'success', 'Logs deleted');
         } else {
-            showNotification(result.error || 'Failed to delete all logs.', 'error');
+            showToast(result.error || 'Failed to delete all logs.', 'error', 'Delete failed');
         }
         setDeleteAllModalOpen(false);
+    };
+
+    const handleExportLogs = async () => {
+        const result = await exportLogs();
+        if (result.success) {
+            showToast(`Downloaded ${result.count} email logs to Excel.`, 'success', 'Export complete');
+        } else {
+            showToast(result.error || 'Failed to export email logs.', 'error', 'Export failed');
+        }
     };
 
     return (
         <ProtectedRoute>
             <div className="min-h-screen bg-gray-50">
-                <Notification info={notification} onDismiss={() => setNotification(null)} themeColor={settings.themeColor} />
+                <ToastViewport toasts={toasts} onDismiss={dismissToast} themeColor={settings.themeColor} />
 
                 {/* Header */}
                 <header className="w-full bg-white shadow-sm border-b border-gray-300">
@@ -479,7 +536,10 @@ export default function DashboardPage() {
                                 <p className="text-sm font-medium text-gray-900">{user?.name}</p>
                                 <p className="text-sm text-gray-500">{user?.email}</p>
                             </div>
-                            <button onClick={logout} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">Logout</button>
+                            <button onClick={logout} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition">
+                                <FiLogOut className="w-4 h-4" />
+                                Logout
+                            </button>
                         </div>
                     </div>
                 </header>
@@ -611,7 +671,7 @@ export default function DashboardPage() {
                                                         <QuickCreateCard icon={<FiCalendar />} title="Date-Based Automation" desc="Automate by specific dates" btnLabel="Create Automation" themeColor={settings.themeColor} onClick={() => { setEditingAutomation(null); setIsDateAutomationModalOpen(true); }} />
                                                     )}
                                                     {(emailTemplateAllowed || campaignAllowed || oneTimeBroadcastAllowed || dateBasedAutomationAllowed) && (
-                                                        <QuickCreateCard icon={<FiUsers />} title="Audiences" desc={audiences.length > 0 ? `${audiences.length} audience${audiences.length !== 1 ? 's' : ''} · ${audiences.reduce((s, a) => s + (a.totalContacts || 0), 0).toLocaleString()} contacts` : "Upload your contact lists"} btnLabel="Upload Audience" themeColor={settings.themeColor} onClick={() => setActiveSection('audiences')} />
+                                                        <QuickCreateCard icon={<FiUsers />} title="Audiences" desc={audiences.length > 0 ? `${audiences.length} audience${audiences.length !== 1 ? 's' : ''} · ${audiences.reduce((s, a) => s + (a.totalContacts || 0), 0).toLocaleString()} contacts` : "Upload your contact lists"} btnLabel="Upload Audience" themeColor={settings.themeColor} onClick={() => setIsAudienceModalOpen(true)} />
                                                     )}
                                                 </div>
                                             </div>
@@ -647,6 +707,14 @@ export default function DashboardPage() {
                                                         <div className="flex items-center justify-between mb-6">
                                                             <h3 className="text-lg font-semibold text-gray-900">Email Logs</h3>
                                                             <div className="flex gap-2">
+                                                                <button
+                                                                    onClick={handleExportLogs}
+                                                                    disabled={isExporting || logsLoading}
+                                                                    className="flex items-center px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                >
+                                                                    <FiDownload className="w-4 h-4 mr-2" />
+                                                                    {isExporting ? 'Downloading...' : 'Download Excel'}
+                                                                </button>
                                                                 <button
                                                                     onClick={refreshLogs}
                                                                     className="flex items-center px-4 py-2 text-white rounded-lg hover:opacity-90 transition text-sm"
@@ -731,13 +799,10 @@ export default function DashboardPage() {
                                                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{log.senderEmail}</td>
                                                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{new Date(log.sentAt).toLocaleString()}</td>
                                                                                 <td className="px-6 py-4 whitespace-nowrap">
-                                                                                    <button
+                                                                                    <ViewIconButton
                                                                                         onClick={() => setSelectedLog(log)}
-                                                                                        className="text-blue-600 hover:text-blue-900"
-                                                                                        title="View Details"
-                                                                                    >
-                                                                                        <FiEye />
-                                                                                    </button>
+                                                                                        label="View Details"
+                                                                                    />
                                                                                 </td>
                                                                             </tr>
                                                                         ))}
@@ -763,6 +828,7 @@ export default function DashboardPage() {
                             )}
 
                             {/* Email Templates Page */}
+                            {/* Email Templates */}
                             {activeSection === 'email-templates' && emailTemplateAllowed && (
                                 <div>
                                     <div className="flex items-center justify-between mb-6">
@@ -780,13 +846,31 @@ export default function DashboardPage() {
                                     ) : (
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                             {templates.map(t => (
-                                                <div key={t.templateId} className="bg-white rounded-lg border p-5 hover:shadow-md transition">
+                                                <div key={t.templateId} className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition flex flex-col">
                                                     <div className="flex items-start justify-between mb-2">
                                                         <h3 className="font-semibold text-gray-900 truncate">{t.name}</h3>
-                                                        <button onClick={() => { setEditingTemplate(t); setIsTemplateModalOpen(true); }} className="text-xs px-2 py-1 rounded text-white ml-2 shrink-0" style={{ backgroundColor: settings.themeColor }}>Edit</button>
+                                                        <span className="text-xs text-gray-400 ml-2 shrink-0">{new Date(t.createdAt).toLocaleDateString()}</span>
                                                     </div>
                                                     <p className="text-sm text-gray-500 truncate">{t.subject}</p>
-                                                    <p className="text-xs text-gray-400 mt-2">{new Date(t.createdAt).toLocaleDateString()}</p>
+                                                    <div className="mt-auto pt-4 border-t border-gray-100 flex items-center gap-2">
+                                                        <ViewIconButton
+                                                            onClick={() => setViewingTemplate(t)}
+                                                            label="Preview"
+                                                        />
+                                                        <EditIconButton
+                                                            onClick={() => { setEditingTemplate(t); setIsTemplateModalOpen(true); }}
+                                                            themeColor={settings.themeColor}
+                                                        />
+                                                        <DeleteIconButton
+                                                            onClick={async () => {
+                                                                if (confirm(`Delete template "${t.name}"?`)) {
+                                                                    await fetch(`/api/templates/${t.templateId}`, { method: 'DELETE' });
+                                                                    setTemplatesTrigger(p => p + 1);
+                                                                }
+                                                            }}
+                                                            label="Delete template"
+                                                        />
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -794,60 +878,55 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            {/* Campaigns Page - Show all campaigns with edit/delete */}
+                            {/* Campaigns */}
                             {activeSection === 'campaigns' && campaignAllowed && (
                                 <div>
-                                    <h1 className="text-2xl font-bold text-gray-900 mb-8">Campaigns</h1>
-                                    <div className="bg-white p-6 rounded-lg shadow-sm">
-                                        {campaignsLoading ? (
-                                            <p className="text-center p-8 text-gray-600">Loading...</p>
-                                        ) : campaigns.length === 0 ? (
-                                            <div className="text-center py-12">
-                                                <FiRefreshCw className="text-gray-300 text-5xl mx-auto mb-4" />
-                                                <p className="text-gray-600 font-semibold">No campaigns created yet</p>
-                                                <p className="text-gray-500 mb-4">Create your first campaign from the dashboard.</p>
-                                            </div>
-                                        ) : (
-                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                                {campaigns.map((campaign) => (
-                                                    <div key={campaign.campaignId} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition">
-                                                        <h3 className="text-lg font-semibold text-gray-900 mb-2">{campaign.campaignName}</h3>
-                                                        <p className="text-sm text-gray-600 mb-4">Created: {new Date(campaign.createdAt).toLocaleDateString()}</p>
-                                                        <div className="flex space-x-2">
-                                                            <button
-                                                                onClick={() => handleOpenForm(campaign)}
-                                                                className="flex-1 px-4 py-2 text-white rounded-lg hover:opacity-90 transition text-sm"
-                                                                style={{ backgroundColor: settings.themeColor }}
-                                                            >
-                                                                Edit
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleOpenTemplate(campaign)}
-                                                                className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:opacity-90 transition text-sm"
-                                                            >
-                                                                View
-                                                            </button>
-                                                            <button
-                                                                onClick={(e) => openDeleteConfirm(campaign, e)}
-                                                                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition text-sm"
-                                                            >
-                                                                Delete
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h1 className="text-2xl font-bold text-gray-900">Campaigns</h1>
+                                        <button onClick={() => handleOpenForm()} className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm" style={{ backgroundColor: settings.themeColor }}>
+                                            <FiPlus /> Create Campaign
+                                        </button>
                                     </div>
+                                    {campaignsLoading ? (
+                                        <p className="text-center p-8 text-gray-500">Loading…</p>
+                                    ) : campaigns.length === 0 ? (
+                                        <div className="bg-white rounded-lg p-12 text-center shadow-sm">
+                                            <FiRefreshCw className="text-gray-300 text-5xl mx-auto mb-4" />
+                                            <p className="text-gray-600 font-semibold">No campaigns created yet</p>
+                                            <p className="text-gray-500 text-sm mt-1">Create your first campaign from the dashboard.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {campaigns.map((campaign) => (
+                                                <div key={campaign.campaignId} className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition flex flex-col">
+                                                    <div className="flex items-start justify-between mb-2">
+                                                        <h3 className="font-semibold text-gray-900 truncate">{campaign.campaignName}</h3>
+                                                        <span className="text-xs text-gray-400 ml-2 shrink-0">{new Date(campaign.createdAt).toLocaleDateString()}</span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-500">Campaign</p>
+                                                    <div className="mt-auto pt-4 border-t border-gray-100 flex items-center gap-2">
+                                                        <EditIconButton
+                                                            onClick={() => handleOpenForm(campaign)}
+                                                            themeColor={settings.themeColor}
+                                                        />
+                                                        <DeleteIconButton
+                                                            onClick={(e) => openDeleteConfirm(campaign, e)}
+                                                            label="Delete campaign"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
-                            {/* Audiences Page */}
+                            {/* Audiences */}
                             {activeSection === 'audiences' && (
                                 <div>
                                     <div className="flex items-center justify-between mb-6">
                                         <h1 className="text-2xl font-bold text-gray-900">Audiences</h1>
-                                        <button onClick={() => setIsAudienceModalOpen(true)} className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm" style={{ backgroundColor: settings.themeColor }}>
+                                        <button onClick={() => { setEditingAudience(null); setIsAudienceModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm" style={{ backgroundColor: settings.themeColor }}>
                                             <FiPlus /> Upload Audience
                                         </button>
                                     </div>
@@ -860,10 +939,10 @@ export default function DashboardPage() {
                                     ) : (
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                             {audiences.map(a => (
-                                                <div key={a.audienceId} className="bg-white rounded-lg border p-5 hover:shadow-md transition">
+                                                <div key={a.audienceId} className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition flex flex-col">
                                                     <div className="flex items-start justify-between mb-2">
                                                         <h3 className="font-semibold text-gray-900 truncate">{a.name}</h3>
-                                                        <button onClick={async () => { if (confirm(`Delete audience "${a.name}"?`)) { await fetch(`/api/audiences/${a.audienceId}`, { method: 'DELETE' }); setAudiencesTrigger(p => p + 1); } }} className="text-red-400 hover:text-red-600 ml-2 shrink-0"><FiTrash2 size={14} /></button>
+                                                        <span className="text-xs text-gray-400 ml-2 shrink-0">{new Date(a.createdAt).toLocaleDateString()}</span>
                                                     </div>
                                                     <p className="text-sm text-gray-500">{a.totalContacts} contacts</p>
                                                     <div className="flex flex-wrap gap-1 mt-2">
@@ -872,7 +951,21 @@ export default function DashboardPage() {
                                                         ))}
                                                         {(a.columns || []).length > 4 && <span className="text-xs text-gray-400">+{(a.columns || []).length - 4} more</span>}
                                                     </div>
-                                                    <p className="text-xs text-gray-400 mt-2">{new Date(a.createdAt).toLocaleDateString()}</p>
+                                                    <div className="mt-auto pt-4 border-t border-gray-100 flex items-center gap-2">
+                                                        <EditIconButton
+                                                            onClick={() => { setEditingAudience(a); setIsAudienceModalOpen(true); }}
+                                                            themeColor={settings.themeColor}
+                                                        />
+                                                        <DeleteIconButton
+                                                            onClick={async () => {
+                                                                if (confirm(`Delete audience "${a.name}"?`)) {
+                                                                    await fetch(`/api/audiences/${a.audienceId}`, { method: 'DELETE' });
+                                                                    setAudiencesTrigger(p => p + 1);
+                                                                }
+                                                            }}
+                                                            label="Delete audience"
+                                                        />
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -880,7 +973,7 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            {/* One-Time Broadcast Page */}
+                            {/* One-Time Broadcasts */}
                             {activeSection === 'one-time-broadcast' && oneTimeBroadcastAllowed && (
                                 <div>
                                     <div className="flex items-center justify-between mb-6">
@@ -898,16 +991,28 @@ export default function DashboardPage() {
                                     ) : (
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                             {broadcasts.map(b => (
-                                                <div key={b.broadcastId} className="bg-white rounded-lg border p-5 hover:shadow-md transition">
+                                                <div key={b.broadcastId} className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition flex flex-col">
                                                     <div className="flex items-start justify-between mb-2">
                                                         <h3 className="font-semibold text-gray-900 truncate">{b.name}</h3>
                                                         <span className={`text-xs px-2 py-0.5 rounded-full ml-2 shrink-0 ${b.status === 'sent' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{b.status}</span>
                                                     </div>
                                                     <p className="text-sm text-gray-500 truncate">📧 {templates.find(t => t.templateId === b.templateId)?.name || '—'}</p>
                                                     <p className="text-xs text-gray-400 mt-1">📅 {b.sendDate} at {b.sendTime} IST</p>
-                                                    {b.status === 'pending' && (
-                                                        <button onClick={() => { setEditingBroadcast(b); setIsBroadcastModalOpen(true); }} className="mt-3 text-xs px-3 py-1 rounded text-white" style={{ backgroundColor: settings.themeColor }}>Edit</button>
-                                                    )}
+                                                    <div className="mt-auto pt-4 border-t border-gray-100 flex items-center gap-2">
+                                                        <EditIconButton
+                                                            onClick={() => { setEditingBroadcast(b); setIsBroadcastModalOpen(true); }}
+                                                            themeColor={settings.themeColor}
+                                                        />
+                                                        <DeleteIconButton
+                                                            onClick={async () => {
+                                                                if (confirm(`Delete broadcast "${b.name}"?`)) {
+                                                                    await fetch(`/api/broadcasts/${b.broadcastId}`, { method: 'DELETE' });
+                                                                    setBroadcastsTrigger(p => p + 1);
+                                                                }
+                                                            }}
+                                                            label="Delete broadcast"
+                                                        />
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -915,7 +1020,7 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            {/* Date-Based Automation Page */}
+                            {/* Date-Based Automations */}
                             {activeSection === 'date-based-automation' && dateBasedAutomationAllowed && (
                                 <div>
                                     <div className="flex items-center justify-between mb-6">
@@ -933,7 +1038,7 @@ export default function DashboardPage() {
                                     ) : (
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                             {automations.map(a => (
-                                                <div key={a.automationId} className="bg-white rounded-lg border p-5 hover:shadow-md transition">
+                                                <div key={a.automationId} className="bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md transition flex flex-col">
                                                     <div className="flex items-start justify-between mb-2">
                                                         <h3 className="font-semibold text-gray-900 truncate">{a.name}</h3>
                                                         <span className={`text-xs px-2 py-0.5 rounded-full ml-2 shrink-0 ${a.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{a.isActive ? 'Active' : 'Paused'}</span>
@@ -941,7 +1046,21 @@ export default function DashboardPage() {
                                                     <p className="text-sm text-gray-500 truncate">📧 {templates.find(t => t.templateId === a.templateId)?.name || '—'}</p>
                                                     <p className="text-xs text-gray-400 mt-1">📅 {a.scheduledDates?.length ?? 0} date{a.scheduledDates?.length !== 1 ? 's' : ''} scheduled</p>
                                                     <p className="text-xs text-gray-400">✓ {a.sentDates?.length ?? 0} sent</p>
-                                                    <button onClick={() => { setEditingAutomation(a); setIsDateAutomationModalOpen(true); }} className="mt-3 text-xs px-3 py-1 rounded text-white" style={{ backgroundColor: settings.themeColor }}>Edit</button>
+                                                    <div className="mt-auto pt-4 border-t border-gray-100 flex items-center gap-2">
+                                                        <EditIconButton
+                                                            onClick={() => { setEditingAutomation(a); setIsDateAutomationModalOpen(true); }}
+                                                            themeColor={settings.themeColor}
+                                                        />
+                                                        <DeleteIconButton
+                                                            onClick={async () => {
+                                                                if (confirm(`Delete automation "${a.name}"?`)) {
+                                                                    await fetch(`/api/date-automations/${a.automationId}`, { method: 'DELETE' });
+                                                                    setAutomationsTrigger(p => p + 1);
+                                                                }
+                                                            }}
+                                                            label="Delete automation"
+                                                        />
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -1034,10 +1153,17 @@ export default function DashboardPage() {
                     onSaved={() => setTemplatesTrigger(p => p + 1)}
                     editTemplate={editingTemplate}
                 />
+                {viewingTemplate && (
+                    <EmailTemplatePreviewModal
+                        template={viewingTemplate}
+                        onClose={() => setViewingTemplate(null)}
+                    />
+                )}
                 <AudienceModal
                     isOpen={isAudienceModalOpen}
-                    onClose={() => setIsAudienceModalOpen(false)}
+                    onClose={() => { setIsAudienceModalOpen(false); setEditingAudience(null); }}
                     onSaved={() => setAudiencesTrigger(p => p + 1)}
+                    editAudience={editingAudience}
                 />
                 <BroadcastModal
                     isOpen={isBroadcastModalOpen}
