@@ -1,13 +1,15 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { FiX, FiUploadCloud, FiTrash2, FiUsers, FiAlertCircle } from 'react-icons/fi';
 import { useTheme } from '@/contexts/ThemeContext';
+import { Audience } from '@/types/audience';
 
 interface Props {
     isOpen: boolean;
     onClose: () => void;
     onSaved: () => void;
+    editAudience?: Audience | null;
 }
 
 interface ParsedData {
@@ -15,7 +17,7 @@ interface ParsedData {
     contacts: Record<string, string>[];
 }
 
-export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
+export default function AudienceModal({ isOpen, onClose, onSaved, editAudience }: Props) {
     const { settings } = useTheme();
     const [name, setName] = useState('');
     const [parsed, setParsed] = useState<ParsedData | null>(null);
@@ -23,6 +25,17 @@ export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
     const [error, setError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const fileRef = useRef<HTMLInputElement>(null);
+
+    const isEditing = !!editAudience;
+
+    useEffect(() => {
+        if (isOpen) {
+            setName(editAudience?.name ?? '');
+            setParsed(null);
+            setFileName('');
+            setError('');
+        }
+    }, [isOpen, editAudience]);
 
     const reset = () => { setName(''); setParsed(null); setFileName(''); setError(''); };
 
@@ -42,13 +55,11 @@ export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
         return { columns, contacts };
     };
 
-    // Simple Excel parser without external lib — uses SheetJS if available, else falls back to CSV
     const parseExcel = async (file: File): Promise<ParsedData> => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = async (e) => {
                 try {
-                    // Dynamically import SheetJS
                     const XLSX = await import('xlsx');
                     const data = new Uint8Array(e.target?.result as ArrayBuffer);
                     const wb = XLSX.read(data, { type: 'array' });
@@ -57,7 +68,6 @@ export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
                     if (rows.length === 0) throw new Error('Sheet is empty.');
                     const rawColumns = Object.keys(rows[0]);
                     const columns = rawColumns.map(c => c.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''));
-                    // also check raw headers for a case-insensitive 'email' match
                     const hasEmail = columns.includes('email') || rawColumns.some(c => c.trim().toLowerCase() === 'email');
                     if (!hasEmail) throw new Error('Sheet must have an "email" column (header must be exactly "email", case-insensitive).');
                     const contacts = rows.map(row => {
@@ -100,14 +110,29 @@ export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
 
     const handleSave = async () => {
         if (!name.trim()) { setError('Audience name is required'); return; }
-        if (!parsed) { setError('Please upload a file first'); return; }
+        if (!isEditing && !parsed) { setError('Please upload a file first'); return; }
         setIsSaving(true);
         try {
-            const res = await fetch('/api/audiences', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: name.trim(), columns: parsed.columns, contacts: parsed.contacts }),
-            });
+            let res: Response;
+            if (isEditing) {
+                // Build update payload — file upload is optional when editing
+                const body: Record<string, unknown> = { name: name.trim() };
+                if (parsed) {
+                    body.columns = parsed.columns;
+                    body.contacts = parsed.contacts;
+                }
+                res = await fetch(`/api/audiences/${editAudience!.audienceId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } else {
+                res = await fetch('/api/audiences', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name.trim(), columns: parsed!.columns, contacts: parsed!.contacts }),
+                });
+            }
             const json = await res.json();
             if (!json.success) throw new Error(json.error);
             onSaved();
@@ -119,13 +144,21 @@ export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
         }
     };
 
+    const saveLabel = () => {
+        if (isSaving) return isEditing ? 'Saving…' : 'Saving…';
+        if (isEditing) return parsed ? `Update Audience (${parsed.contacts.length} contacts)` : 'Save Name';
+        return `Save Audience (${parsed?.contacts.length ?? 0} contacts)`;
+    };
+
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between p-5 border-b">
-                    <h2 className="text-xl font-bold flex items-center gap-2"><FiUsers /> Upload Audience</h2>
+                    <h2 className="text-xl font-bold flex items-center gap-2">
+                        <FiUsers /> {isEditing ? 'Edit Audience' : 'Upload Audience'}
+                    </h2>
                     <button onClick={handleClose} className="p-2 hover:bg-gray-100 rounded-full"><FiX size={20} /></button>
                 </div>
 
@@ -147,16 +180,23 @@ export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
                     </div>
 
                     {/* Drop Zone */}
-                    <div
-                        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors"
-                        onDrop={handleDrop}
-                        onDragOver={e => e.preventDefault()}
-                        onClick={() => fileRef.current?.click()}
-                    >
-                        <FiUploadCloud className="mx-auto text-gray-400 mb-2" size={36} />
-                        <p className="text-gray-600 text-sm">Drop your <strong>.xlsx</strong>, <strong>.xls</strong>, or <strong>.csv</strong> file here</p>
-                        <p className="text-gray-400 text-xs mt-1">The first row must be headers. An <strong>email</strong> column is required.</p>
-                        <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+                    <div>
+                        {isEditing && (
+                            <p className="text-xs text-gray-500 mb-2">
+                                Optionally upload a new file to replace contacts. Leave empty to only rename.
+                            </p>
+                        )}
+                        <div
+                            className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors"
+                            onDrop={handleDrop}
+                            onDragOver={e => e.preventDefault()}
+                            onClick={() => fileRef.current?.click()}
+                        >
+                            <FiUploadCloud className="mx-auto text-gray-400 mb-2" size={36} />
+                            <p className="text-gray-600 text-sm">Drop your <strong>.xlsx</strong>, <strong>.xls</strong>, or <strong>.csv</strong> file here</p>
+                            <p className="text-gray-400 text-xs mt-1">The first row must be headers. An <strong>email</strong> column is required.</p>
+                            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+                        </div>
                     </div>
 
                     {parsed && (
@@ -176,8 +216,6 @@ export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
                             <p className="text-xs text-gray-500 mt-1">
                                 Use <code className="bg-gray-100 px-1 rounded">{'{{column_name}}'}</code> in your email body to insert contact data.
                             </p>
-
-                            {/* Preview first 3 contacts */}
                             <div className="overflow-x-auto mt-2">
                                 <table className="w-full text-xs border-collapse">
                                     <thead>
@@ -209,11 +247,11 @@ export default function AudienceModal({ isOpen, onClose, onSaved }: Props) {
                         <button
                             type="button"
                             onClick={handleSave}
-                            disabled={isSaving || !parsed || !name.trim()}
+                            disabled={isSaving || (!isEditing && !parsed) || !name.trim()}
                             className="px-4 py-2 text-white rounded-lg text-sm disabled:opacity-50"
                             style={{ backgroundColor: settings.themeColor }}
                         >
-                            {isSaving ? 'Saving…' : `Save Audience (${parsed?.contacts.length ?? 0} contacts)`}
+                            {saveLabel()}
                         </button>
                     </div>
                 </div>

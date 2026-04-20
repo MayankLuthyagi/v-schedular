@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
         const status = searchParams.get('status');
         const search = searchParams.get('search');
         const campaignId = searchParams.get('campaignId');
+        const exportAll = searchParams.get('export') === 'true';
         const page = parseInt(searchParams.get('page') || '1', 10);
         const limit = parseInt(searchParams.get('limit') || '20', 10);
         const skip = (page - 1) * limit;
@@ -59,23 +60,28 @@ export async function GET(request: NextRequest) {
         // - One to get the actual data for the current page.
         // - One to count the total number of documents that match the filter.
         const [logs, totalLogs] = await Promise.all([
-            collection
-                .find(query)
-                .sort({ sentAt: -1 }) // Show the newest logs first
-                .skip(skip)
-                .limit(limit)
-                .toArray(),
+            exportAll
+                ? collection
+                    .find(query)
+                    .sort({ sentAt: -1 })
+                    .toArray()
+                : collection
+                    .find(query)
+                    .sort({ sentAt: -1 }) // Show the newest logs first
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray(),
             collection.countDocuments(query),
         ]);
 
         // --- 4. Calculate Total Pages for Pagination ---
-        const totalPages = Math.ceil(totalLogs / limit);
+        const totalPages = exportAll ? 1 : Math.ceil(totalLogs / limit);
 
         // --- 5. Return Data in the Correct Format ---
         return NextResponse.json({
             logs,
             totalPages,
-            currentPage: page,
+            currentPage: exportAll ? 1 : page,
         });
 
     } catch (error: unknown) {

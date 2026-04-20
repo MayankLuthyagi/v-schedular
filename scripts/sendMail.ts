@@ -49,6 +49,35 @@ function applyVariables(text: string, contact: AudienceContact): string {
     });
 }
 
+/**
+ * Strip HTML tags and convert common elements to plain-text equivalents.
+ * Used to generate the text/plain MIME part alongside the HTML body so
+ * email clients that cannot render HTML still show readable content, and
+ * spam filters that penalise HTML-only messages are satisfied.
+ */
+function htmlToText(html: string): string {
+    return html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/h[1-6]>/gi, '\n\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<li[^>]*>/gi, '• ')
+        .replace(/<\/tr>/gi, '\n')
+        .replace(/<\/td>/gi, '\t')
+        .replace(/<a[^>]+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/&apos;/gi, "'")
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
 /** Get today's date string in IST (YYYY-MM-DD) */
 function getTodayIST(): string {
     const now = new Date();
@@ -388,6 +417,7 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                                 to: contact.email.trim(), subject: personalSubject,
                                 replyTo: campaign.replyToEmail || authEmail.email,
                                 html: bodyWithTracking,
+                                text: htmlToText(bodyWithTracking),
                                 headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
                             };
                             if (campaign.attachments?.length > 0) {
@@ -432,6 +462,7 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                                 subject: tpl.subject,
                                 replyTo: campaign.replyToEmail || authEmail.email,
                                 html: bodyWithUnsub,
+                                text: htmlToText(bodyWithUnsub),
                                 headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
                             };
                             if (campaign.attachments?.length > 0) {
@@ -446,6 +477,9 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                                 remaining = Math.max(0, remaining - batchEmails.length);
                             } else {
                                 console.error(`Batch failed: ${result.error?.reason}`);
+                                if (await isFeatureAllowed(db, 'emailLogs')) {
+                                    await db.collection("EmailLog").insertMany(batchEmails.map(email => ({ campaignId: campaign.campaignId, recipientEmail: email, senderEmail: authEmail.email, sendMethod: campaign.sendMethod, status: 'failed', failureReason: result.error?.reason, failureCategory: result.error?.category, originalError: result.error?.originalError, sentAt: new Date() })));
+                                }
                                 break;
                             }
                             if (remaining > 0 && batchIdx < orderedContacts.length) {
@@ -555,7 +589,13 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                         if (!contact.email?.trim()) continue;
                         if (await isUnsubscribed(db, contact.email.trim())) { console.log(`Skipping unsubscribed ${contact.email}`); continue; }
                         const validation = await validateEmail(contact.email.trim());
-                        if (!validation.isValid) { console.log(`Skipping invalid ${contact.email}: ${validation.reason}`); continue; }
+                        if (!validation.isValid) {
+                            console.log(`Skipping invalid ${contact.email}: ${validation.reason}`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertOne({ status: 'failed', failureReason: `Validation: ${validation.reason}`, failureCategory: 'validation', originalError: validation.reason, campaignId: broadcast.broadcastId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: broadcast.sendMethod, sentAt: new Date() });
+                            }
+                            continue;
+                        }
 
                         const personalBody = applyVariables(broadcastTpl.body, contact);
                         const personalSubject = applyVariables(broadcastTpl.subject, contact);
@@ -571,6 +611,7 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                             subject: personalSubject,
                             replyTo: broadcast.replyToEmail || authEmail.email,
                             html: bodyWithTracking,
+                            text: htmlToText(bodyWithTracking),
                             headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
                         };
                         if (broadcast.attachments?.length > 0) {
@@ -584,15 +625,28 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                             }
                         } else {
                             console.log(`Failed broadcast to ${contact.email}: ${result.error?.reason}`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertOne({ _id: logId, status: 'failed', failureReason: result.error?.reason, failureCategory: result.error?.category, originalError: result.error?.originalError, campaignId: broadcast.broadcastId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: broadcast.sendMethod, sentAt: new Date() });
+                            }
                         }
                         remaining--;
                         if (remaining > 0 && globalIdx < orderedContacts.length) await sleep(1000 + Math.floor(Math.random() * 2000));
                     }
                 } else {
-                    // BCC/CC batch
+                    // BCC/CC batch — validate & check unsubscribe per contact (mirrors campaign BCC logic)
                     const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
-                    const batchEmails = orderedContacts.slice(0, Math.min(remaining, ENV_MAX)).map(c => c.email).filter(Boolean) as string[];
-                    if (batchEmails.length > 0) {
+                    const BATCH_DELAY_MS = Number(process.env.BCC_BATCH_DELAY_MS) || 60000;
+                    let batchIdx = 0;
+                    while (remaining > 0 && batchIdx < orderedContacts.length) {
+                        const batchEmails: string[] = [];
+                        while (batchIdx < orderedContacts.length && batchEmails.length < Math.min(remaining, ENV_MAX)) {
+                            const contact = orderedContacts[batchIdx++];
+                            if (!contact.email?.trim()) continue;
+                            if (await isUnsubscribed(db, contact.email.trim())) continue;
+                            const v = await validateEmail(contact.email.trim());
+                            if (v.isValid) batchEmails.push(contact.email.trim());
+                        }
+                        if (batchEmails.length === 0) break;
                         const unsubUrl = `${baseUrl}/unsubscribe`;
                         const bodyWithUnsub = `${broadcastTpl.body}<div style="text-align:center;margin-top:30px;font-size:12px;color:#6c757d;">If you no longer wish to receive these emails, <a href="${unsubUrl}" style="color:#6c757d;text-decoration:underline;">click here to unsubscribe</a>.</div>`;
                         const mailOptions: nodemailer.SendMailOptions = {
@@ -603,11 +657,28 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                             subject: broadcastTpl.subject,
                             replyTo: broadcast.replyToEmail || authEmail.email,
                             html: bodyWithUnsub,
+                            text: htmlToText(bodyWithUnsub),
                             headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
                         };
+                        if (broadcast.attachments?.length > 0) {
+                            mailOptions.attachments = broadcast.attachments.map((a: Attachment) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType }));
+                        }
                         const result = await sendWithRetries(transporter, mailOptions, 3);
                         if (result.success) {
                             console.log(`Sent broadcast batch from ${authEmail.email} to ${batchEmails.length} recipients.`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertMany(batchEmails.map(email => ({ campaignId: broadcast.broadcastId, recipientEmail: email, senderEmail: authEmail.email, sendMethod: broadcast.sendMethod, status: 'sent', sentAt: new Date() })));
+                            }
+                            remaining = Math.max(0, remaining - batchEmails.length);
+                        } else {
+                            console.error(`Broadcast batch failed: ${result.error?.reason}`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertMany(batchEmails.map(email => ({ campaignId: broadcast.broadcastId, recipientEmail: email, senderEmail: authEmail.email, sendMethod: broadcast.sendMethod, status: 'failed', failureReason: result.error?.reason, failureCategory: result.error?.category, originalError: result.error?.originalError, sentAt: new Date() })));
+                            }
+                            break;
+                        }
+                        if (remaining > 0 && batchIdx < orderedContacts.length) {
+                            await sleep(BATCH_DELAY_MS + Math.floor(Math.random() * 2000));
                         }
                     }
                 }
@@ -690,9 +761,15 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                     while (globalIdx < orderedContacts.length && remaining > 0) {
                         const contact = orderedContacts[globalIdx++];
                         if (!contact.email?.trim()) continue;
-                        if (await isUnsubscribed(db, contact.email.trim())) continue;
+                        if (await isUnsubscribed(db, contact.email.trim())) { console.log(`Skipping unsubscribed ${contact.email}`); continue; }
                         const validation = await validateEmail(contact.email.trim());
-                        if (!validation.isValid) continue;
+                        if (!validation.isValid) {
+                            console.log(`Skipping invalid ${contact.email}: ${validation.reason}`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertOne({ status: 'failed', failureReason: `Validation: ${validation.reason}`, failureCategory: 'validation', originalError: validation.reason, campaignId: automation.automationId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: automation.sendMethod, sentAt: new Date() });
+                            }
+                            continue;
+                        }
 
                         const personalBody = applyVariables(automationTpl.body, contact);
                         const personalSubject = applyVariables(automationTpl.subject, contact);
@@ -706,6 +783,7 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                             from: authEmail.name ? `${authEmail.name} <${authEmail.email}>` : authEmail.email,
                             to: contact.email.trim(), subject: personalSubject, replyTo: automation.replyToEmail || authEmail.email,
                             html: bodyWithTracking,
+                            text: htmlToText(bodyWithTracking),
                             headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
                             attachments: automation.attachments?.length > 0 ? automation.attachments.map((a: Attachment) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType })) : undefined,
                         }, 3);
@@ -714,14 +792,30 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                             if (await isFeatureAllowed(db, 'emailLogs')) {
                                 await db.collection("EmailLog").insertOne({ _id: logId, status: 'sent', campaignId: automation.automationId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: automation.sendMethod, sentAt: new Date() });
                             }
+                        } else {
+                            console.log(`Failed automation to ${contact.email}: ${result.error?.reason}`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertOne({ _id: logId, status: 'failed', failureReason: result.error?.reason, failureCategory: result.error?.category, originalError: result.error?.originalError, campaignId: automation.automationId, recipientEmail: contact.email.trim(), senderEmail: authEmail.email, sendMethod: automation.sendMethod, sentAt: new Date() });
+                            }
                         }
                         remaining--;
                         if (remaining > 0) await sleep(1000 + Math.floor(Math.random() * 2000));
                     }
                 } else {
+                    // BCC/CC batch — validate & check unsubscribe per contact (mirrors campaign BCC logic)
                     const ENV_MAX = Number(process.env.MAX_BCC_BATCH) || 100;
-                    const batchEmails = orderedContacts.slice(0, Math.min(remaining, ENV_MAX)).map(c => c.email).filter(Boolean) as string[];
-                    if (batchEmails.length > 0) {
+                    const BATCH_DELAY_MS = Number(process.env.BCC_BATCH_DELAY_MS) || 60000;
+                    let batchIdx = 0;
+                    while (remaining > 0 && batchIdx < orderedContacts.length) {
+                        const batchEmails: string[] = [];
+                        while (batchIdx < orderedContacts.length && batchEmails.length < Math.min(remaining, ENV_MAX)) {
+                            const contact = orderedContacts[batchIdx++];
+                            if (!contact.email?.trim()) continue;
+                            if (await isUnsubscribed(db, contact.email.trim())) continue;
+                            const v = await validateEmail(contact.email.trim());
+                            if (v.isValid) batchEmails.push(contact.email.trim());
+                        }
+                        if (batchEmails.length === 0) break;
                         const unsubUrl = `${baseUrl}/unsubscribe`;
                         const bodyWithUnsub = `${automationTpl.body}<div style="text-align:center;margin-top:30px;font-size:12px;color:#6c757d;">If you no longer wish to receive these emails, <a href="${unsubUrl}" style="color:#6c757d;text-decoration:underline;">click here to unsubscribe</a>.</div>`;
                         const result = await sendWithRetries(transporter, {
@@ -731,9 +825,26 @@ async function sendWithRetries(transporter: any, mailOptions: any, maxRetries = 
                             bcc: automation.sendMethod === 'bcc' ? batchEmails : undefined,
                             subject: automationTpl.subject, replyTo: automation.replyToEmail || authEmail.email,
                             html: bodyWithUnsub,
+                            text: htmlToText(bodyWithUnsub),
                             headers: { 'List-Unsubscribe': `<${unsubUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' },
+                            attachments: automation.attachments?.length > 0 ? automation.attachments.map((a: Attachment) => ({ filename: a.filename, content: Buffer.from(a.content, 'base64'), contentType: a.contentType })) : undefined,
                         }, 3);
-                        if (result.success) console.log(`Automation batch sent from ${authEmail.email} to ${batchEmails.length} recipients.`);
+                        if (result.success) {
+                            console.log(`Automation batch sent from ${authEmail.email} to ${batchEmails.length} recipients.`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertMany(batchEmails.map(email => ({ campaignId: automation.automationId, recipientEmail: email, senderEmail: authEmail.email, sendMethod: automation.sendMethod, status: 'sent', sentAt: new Date() })));
+                            }
+                            remaining = Math.max(0, remaining - batchEmails.length);
+                        } else {
+                            console.error(`Automation batch failed: ${result.error?.reason}`);
+                            if (await isFeatureAllowed(db, 'emailLogs')) {
+                                await db.collection("EmailLog").insertMany(batchEmails.map(email => ({ campaignId: automation.automationId, recipientEmail: email, senderEmail: authEmail.email, sendMethod: automation.sendMethod, status: 'failed', failureReason: result.error?.reason, failureCategory: result.error?.category, originalError: result.error?.originalError, sentAt: new Date() })));
+                            }
+                            break;
+                        }
+                        if (remaining > 0 && batchIdx < orderedContacts.length) {
+                            await sleep(BATCH_DELAY_MS + Math.floor(Math.random() * 2000));
+                        }
                     }
                 }
                 transporter.close();

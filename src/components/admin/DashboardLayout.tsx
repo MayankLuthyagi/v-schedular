@@ -2,7 +2,8 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { HiHome, HiLogout, HiCog } from "react-icons/hi";
+import { HiHome, HiCog } from "react-icons/hi";
+import { FiLogOut } from "react-icons/fi";
 
 // NEW: Header component for the top bar
 const Header = () => {
@@ -32,9 +33,10 @@ const Header = () => {
                 <button
                     onClick={handleLogout}
                     title="Logout"
-                    className="px-6 rounded-full text-gray-500 hover:bg-red-100 hover:text-red-600 transition-colors cursor-pointer"
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm font-medium transition-colors cursor-pointer"
                 >
-                    <HiLogout className="w-8 h-8" />
+                    <FiLogOut className="w-4 h-4" />
+                    Logout
                 </button>
             </div>
         </header>

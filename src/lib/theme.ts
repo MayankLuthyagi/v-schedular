@@ -15,6 +15,16 @@ export function hexToRgb(hex: string): { r: number; g: number; b: number } | nul
 }
 
 /**
+ * Converts a hex color into an rgba() string with the requested alpha.
+ */
+export function hexToRgba(hex: string, alpha: number): string {
+    const rgb = hexToRgb(hex);
+    if (!rgb) return `rgba(59, 130, 246, ${alpha})`;
+
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+}
+
+/**
  * Generates lighter and darker variants of a color
  */
 export function generateColorVariants(hex: string) {
