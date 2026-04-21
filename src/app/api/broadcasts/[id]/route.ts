@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/db';
+import { validateBroadcastPayload } from '@/lib/scheduleValidation';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
@@ -17,18 +18,41 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     try {
         const { id } = await params;
         const formData = await request.formData();
+        let senderEmails: string[] = [];
+        try {
+            senderEmails = JSON.parse(formData.get('senderEmails') as string || '[]');
+        } catch {
+            return NextResponse.json({ success: false, error: 'Invalid sender email selection' }, { status: 400 });
+        }
 
-        const updateData: Record<string, unknown> = {
+        const payload = {
             name: formData.get('name') as string,
             templateId: formData.get('templateId') as string,
-            senderEmails: JSON.parse(formData.get('senderEmails') as string || '[]'),
-            audienceId: formData.get('audienceId') as string || undefined,
+            senderEmails,
+            audienceId: formData.get('audienceId') as string || '',
             sendDate: formData.get('sendDate') as string,
             sendTime: formData.get('sendTime') as string,
             sendMethod: formData.get('sendMethod') as string,
             toEmail: formData.get('toEmail') as string || '',
             replyToEmail: formData.get('replyToEmail') as string || '',
-            dailySendLimitPerSender: parseInt(formData.get('dailySendLimitPerSender') as string) || 100,
+            dailySendLimitPerSender: parseInt(formData.get('dailySendLimitPerSender') as string) || 0,
+        };
+        const validationError = validateBroadcastPayload(payload);
+        if (validationError) {
+            return NextResponse.json({ success: false, error: validationError }, { status: 400 });
+        }
+
+        const updateData: Record<string, unknown> = {
+            name: payload.name,
+            templateId: payload.templateId,
+            senderEmails,
+            audienceId: payload.audienceId || undefined,
+            sendDate: payload.sendDate,
+            sendTime: payload.sendTime,
+            sendMethod: payload.sendMethod,
+            toEmail: payload.toEmail,
+            replyToEmail: payload.replyToEmail,
+            dailySendLimitPerSender: payload.dailySendLimitPerSender,
             randomSend: formData.get('randomSend') === 'true',
             updatedAt: new Date(),
         };
