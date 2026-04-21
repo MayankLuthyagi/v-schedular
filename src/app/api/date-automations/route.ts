@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
+import { validateDateAutomationPayload } from '@/lib/scheduleValidation';
+import type { ScheduledDate } from '@/types/dateAutomation';
 
 export async function GET() {
     try {
@@ -15,18 +17,42 @@ export async function GET() {
 export async function POST(request: NextRequest) {
     try {
         const formData = await request.formData();
+        let senderEmails: string[] = [];
+        let scheduledDates: ScheduledDate[] = [];
+        try {
+            senderEmails = JSON.parse(formData.get('senderEmails') as string || '[]');
+            scheduledDates = JSON.parse(formData.get('scheduledDates') as string || '[]');
+        } catch {
+            return NextResponse.json({ success: false, error: 'Invalid sender or scheduled date selection' }, { status: 400 });
+        }
 
-        const automation: Record<string, unknown> = {
-            automationId: uuidv4(),
+        const payload = {
             name: formData.get('name') as string,
             templateId: formData.get('templateId') as string,
-            senderEmails: JSON.parse(formData.get('senderEmails') as string || '[]'),
-            audienceId: formData.get('audienceId') as string || undefined,
-            scheduledDates: JSON.parse(formData.get('scheduledDates') as string || '[]'),
+            senderEmails,
+            audienceId: formData.get('audienceId') as string || '',
+            scheduledDates,
             sendMethod: formData.get('sendMethod') as string,
             toEmail: formData.get('toEmail') as string || '',
             replyToEmail: formData.get('replyToEmail') as string || '',
-            dailySendLimitPerSender: parseInt(formData.get('dailySendLimitPerSender') as string) || 100,
+            dailySendLimitPerSender: parseInt(formData.get('dailySendLimitPerSender') as string) || 0,
+        };
+        const validationError = validateDateAutomationPayload(payload);
+        if (validationError) {
+            return NextResponse.json({ success: false, error: validationError }, { status: 400 });
+        }
+
+        const automation: Record<string, unknown> = {
+            automationId: uuidv4(),
+            name: payload.name,
+            templateId: payload.templateId,
+            senderEmails,
+            audienceId: payload.audienceId || undefined,
+            scheduledDates,
+            sendMethod: payload.sendMethod,
+            toEmail: payload.toEmail,
+            replyToEmail: payload.replyToEmail,
+            dailySendLimitPerSender: payload.dailySendLimitPerSender,
             randomSend: formData.get('randomSend') === 'true',
             isActive: formData.get('isActive') === 'true',
             sentDates: [],

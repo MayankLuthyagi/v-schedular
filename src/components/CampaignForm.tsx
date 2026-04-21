@@ -1,17 +1,31 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useForm, Controller, UseFormRegister } from 'react-hook-form';
+import { useForm, Controller, UseFormRegister, RegisterOptions } from 'react-hook-form';
 import { CampaignFormData, Campaign } from '@/types/campaign';
-import { FiX, FiUploadCloud, FiTrash2, FiLoader } from 'react-icons/fi';
+import { FiX, FiUploadCloud, FiTrash2, FiLoader, FiAlertTriangle, FiInfo } from 'react-icons/fi';
 import { useTheme } from '@/contexts/ThemeContext';
+import { isValidEmailAddress } from '@/lib/emailAddress';
+import {
+    SenderDirectoryEntry,
+    getSenderScheduledLoad,
+    inferSenderLimit,
+    summarizeSenderLimitSelection,
+} from '@/lib/scheduleLoad';
+import { getTemplateAudienceWarning } from '@/lib/templateVariables';
 
-interface EmailTemplateOption { templateId: string; name: string; subject: string; }
-interface AudienceOption { audienceId: string; name: string; totalContacts: number; }
+interface EmailTemplateOption { templateId: string; name: string; subject: string; body: string; }
+interface AudienceOption { audienceId: string; name: string; totalContacts: number; columns: string[]; }
+
+// Truncate template option text
+function truncateLabel(name: string, subject: string, max = 72) {
+    const full = `${name} — ${subject}`;
+    return full.length > max ? full.slice(0, max - 1) + '…' : full;
+}
 
 // --- Custom Hook for Fetching Data ---
 const useAuthEmails = (isOpen: boolean) => {
-    const [authEmails, setAuthEmails] = useState<string[]>([]);
+    const [authEmails, setAuthEmails] = useState<SenderDirectoryEntry[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     useEffect(() => {
         if (!isOpen) return;
@@ -22,7 +36,10 @@ const useAuthEmails = (isOpen: boolean) => {
                 if (!response.ok) throw new Error("Failed to fetch sender emails.");
                 const data = await response.json();
                 if (data.success && Array.isArray(data.emails)) {
-                    setAuthEmails(data.emails.map((emailObj: { email: string }) => emailObj.email));
+                    setAuthEmails(data.emails.map((emailObj: { email: string; main?: string | null }) => ({
+                        email: emailObj.email,
+                        main: emailObj.main || '',
+                    })));
                 }
             } catch (error) {
                 console.error('Error fetching auth emails:', error);
@@ -50,6 +67,29 @@ const useTemplatesAndAudiences = (isOpen: boolean) => {
         }).catch(console.error);
     }, [isOpen]);
     return { templates, audiences };
+};
+
+const useExistingSchedules = (isOpen: boolean, editCampaignId?: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [broadcasts, setBroadcasts] = useState<any[]>([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [campaigns, setCampaigns] = useState<any[]>([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [automations, setAutomations] = useState<any[]>([]);
+    useEffect(() => {
+        if (!isOpen) return;
+        Promise.all([
+            fetch('/api/broadcasts').then(r => r.json()),
+            fetch('/api/campaigns').then(r => r.json()),
+            fetch('/api/date-automations').then(r => r.json()),
+        ]).then(([bc, cp, da]) => {
+            if (bc.success) setBroadcasts(bc.broadcasts || []);
+            const cpArr = Array.isArray(cp) ? cp : (cp?.campaigns || []);
+            setCampaigns(cpArr.filter((c: { campaignId?: string }) => c.campaignId !== editCampaignId));
+            if (da.success) setAutomations(da.automations || []);
+        }).catch(console.error);
+    }, [isOpen, editCampaignId]);
+    return { broadcasts, campaigns, automations };
 };
 
 // --- Main Campaign Form Component ---
@@ -87,6 +127,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
     const [isTogglingResend, setIsTogglingResend] = useState(false);
     const { authEmails, isLoading: emailsLoading } = useAuthEmails(isOpen);
     const { templates, audiences } = useTemplatesAndAudiences(isOpen);
+    const { broadcasts: existingBroadcasts, campaigns: existingCampaigns, automations: existingAutomations } = useExistingSchedules(isOpen, editCampaign?.campaignId);
     const { settings } = useTheme();
 
     const defaultValues = useMemo<CampaignFormData>(() => ({
@@ -108,8 +149,10 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
         isActive: true,
     }), []);
 
-    const { register, handleSubmit, control, watch, reset, formState: { isSubmitting } } = useForm<CampaignFormData>({
+    const { register, handleSubmit, control, watch, reset, setValue, formState: { isSubmitting, errors } } = useForm<CampaignFormData>({
         defaultValues,
+        mode: 'onChange',
+        reValidateMode: 'onChange',
     });
 
     // Populate form with data when editing
@@ -177,8 +220,83 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
         }
     };
 
+    const templateId = watch('templateId');
+    const audienceId = watch('audienceId');
     const sendMethod = watch('sendMethod');
+    const startDate = watch('startDate');
+    const endDate = watch('endDate');
+    const sendDays = watch('sendDays');
+    const senderEmailsValue = watch('senderEmails');
+    const senderEmails = useMemo(() => senderEmailsValue || [], [senderEmailsValue]);
+    const dailyLimit = watch('dailySendLimitPerSender');
     const showSentTodayBanner = !!editCampaign && (sentTodayToggle || isTodaySent(editCampaign.todaySent));
+    const senderDirectory = useMemo(
+        () => Object.fromEntries(authEmails.map((entry) => [entry.email, entry])),
+        [authEmails]
+    );
+    const senderLimitSummary = useMemo(
+        () => summarizeSenderLimitSelection(senderEmails, senderDirectory),
+        [senderEmails, senderDirectory]
+    );
+    const selectedTemplate = useMemo(
+        () => templates.find((template) => template.templateId === templateId) || null,
+        [templates, templateId]
+    );
+    const selectedAudience = useMemo(
+        () => audiences.find((audience) => audience.audienceId === audienceId) || null,
+        [audiences, audienceId]
+    );
+    const templateAudienceWarning = useMemo(
+        () => getTemplateAudienceWarning({ template: selectedTemplate, audience: selectedAudience, sendMethod }),
+        [selectedTemplate, selectedAudience, sendMethod]
+    );
+
+    // Compute scheduling conflict warnings for the campaign date range + days
+    const scheduleConflicts = useMemo(() => {
+        if (!startDate || !endDate || !sendDays?.length || !senderEmails?.length) return [];
+        // Check next 14 days within the range for conflicts
+        const conflicts: string[] = [];
+        const start = new Date(startDate + 'T00:00:00');
+        const end = new Date(endDate + 'T00:00:00');
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const checkStart = start < today ? today : start;
+        const maxCheck = new Date(checkStart);
+        maxCheck.setDate(maxCheck.getDate() + 14);
+        const checkEnd = end < maxCheck ? end : maxCheck;
+
+        const conflictDates: string[] = [];
+        const cur = new Date(checkStart);
+        while (cur <= checkEnd) {
+            const dateStr = cur.toISOString().split('T')[0];
+            const dayName = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+            if (sendDays.includes(dayName)) {
+                senderEmails.forEach(sender => {
+                    const { totalPlanned, sources } = getSenderScheduledLoad({
+                        date: dateStr,
+                        sender,
+                        broadcasts: existingBroadcasts,
+                        campaigns: existingCampaigns,
+                        automations: existingAutomations,
+                    });
+                    const recommendedLimit = inferSenderLimit(senderDirectory[sender] || sender).recommendedLimit;
+                    const proposedLoad = Number(dailyLimit) || 0;
+                    const totalAfterThisCampaign = totalPlanned + proposedLoad;
+
+                    if ((sources.length > 0 || totalAfterThisCampaign > recommendedLimit) && !conflictDates.includes(`${dateStr}-${sender}`)) {
+                        conflictDates.push(`${dateStr}-${sender}`);
+                        if (totalAfterThisCampaign > recommendedLimit) {
+                            conflicts.push(`${sender} on ${dateStr}: ${totalAfterThisCampaign}/day after this campaign (${totalPlanned} already planned${sources.length ? ` from ${sources.join(', ')}` : ''}). Suggested max: ${recommendedLimit}/day.`);
+                        } else {
+                            conflicts.push(`${sender} on ${dateStr}: ${totalPlanned} already planned from ${sources.join(', ')}. This campaign would take it to ${totalAfterThisCampaign}/${recommendedLimit}.`);
+                        }
+                    }
+                });
+            }
+            cur.setDate(cur.getDate() + 1);
+        }
+        return conflicts.slice(0, 5); // show max 5 to avoid clutter
+    }, [startDate, endDate, sendDays, senderEmails, dailyLimit, existingBroadcasts, existingCampaigns, existingAutomations, senderDirectory]);
 
     if (!isOpen) return null;
 
@@ -261,26 +379,41 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                             {/* --- CONTENT TAB --- */}
                             {activeTab === 'content' && (
                                 <div className="space-y-6">
-                                    <FormInput label="Campaign Name" name="campaignName" register={register} required />
+                                    <FormInput
+                                        label="Campaign Name"
+                                        name="campaignName"
+                                        register={register}
+                                        required="Campaign name is required"
+                                        error={errors.campaignName?.message}
+                                    />
 
                                     {/* Template selector (required) */}
-                                    <div>
+                                    <div className="max-w-2xl">
                                         <label className="block text-sm font-medium text-gray-700 mb-1">
                                             Email Template <span className="text-red-500">*</span>
                                         </label>
                                         <select
-                                            {...register('templateId', { required: true })}
-                                            className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            {...register('templateId', { required: 'Please select an email template' })}
+                                            className={`w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.templateId ? 'border-red-400' : 'border-gray-300'}`}
                                         >
                                             <option value="">— Select a template (required) —</option>
                                             {templates.map(t => (
-                                                <option key={t.templateId} value={t.templateId}>{t.name} — {t.subject}</option>
+                                                <option key={t.templateId} value={t.templateId}>{truncateLabel(t.name, t.subject)}</option>
                                             ))}
                                         </select>
+                                        {errors.templateId && <p className="text-xs text-red-500 mt-0.5">{errors.templateId.message || 'Required'}</p>}
                                         {templates.length === 0 && (
                                             <p className="text-xs text-gray-400 mt-1">
                                                 No templates yet — go to Email Templates and create one first.
                                             </p>
+                                        )}
+                                        {templateAudienceWarning && (
+                                            <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                                                <p className="text-xs font-semibold text-amber-700 flex items-center gap-1">
+                                                    <FiAlertTriangle size={13} /> Template warning
+                                                </p>
+                                                <p className="text-xs text-amber-600 mt-1">{templateAudienceWarning.message}</p>
+                                            </div>
                                         )}
                                     </div>
                                 </div>
@@ -290,24 +423,94 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                             {activeTab === 'scheduling' && (
                                 <div className="space-y-6">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <FormInput label="Start Date" name="startDate" type="date" register={register} required />
-                                        <FormInput label="End Date" name="endDate" type="date" register={register} required />
+                                        <FormInput
+                                            label="Start Date"
+                                            name="startDate"
+                                            type="date"
+                                            register={register}
+                                            required="Start date is required"
+                                            error={errors.startDate?.message}
+                                        />
+                                        <FormInput
+                                            label="End Date"
+                                            name="endDate"
+                                            type="date"
+                                            register={register}
+                                            required="End date is required"
+                                            rules={{
+                                                validate: (value: string) => !startDate || !value || value >= startDate || 'End date must be on or after start date',
+                                            }}
+                                            error={errors.endDate?.message}
+                                        />
                                     </div>
-                                    <FormInput label="Send Time" name="sendTime" type="time" register={register} required />
+                                    <FormInput
+                                        label="Send Time"
+                                        name="sendTime"
+                                        type="time"
+                                        register={register}
+                                        required="Send time is required"
+                                        error={errors.sendTime?.message}
+                                    />
                                     <Controller
                                         name="sendDays"
                                         control={control}
-                                        rules={{ required: true }}
+                                        rules={{ required: 'Select at least one day' }}
                                         render={({ field }) => (
                                             <ToggleButtonGroup
                                                 label="Send on Days"
                                                 options={['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']}
                                                 value={field.value}
                                                 onChange={field.onChange}
+                                                error={errors.sendDays?.message as string | undefined}
                                             />
                                         )}
                                     />
-                                    <FormInput label="Daily Send Limit (per Sender)" name="dailySendLimitPerSender" type="number" register={register} required min="1" />
+                                    <div>
+                                        <FormInput
+                                            label="Daily Send Limit (per Sender)"
+                                            name="dailySendLimitPerSender"
+                                            type="number"
+                                            register={register}
+                                            required="Daily send limit is required"
+                                            rules={{
+                                                min: { value: 1, message: 'Daily send limit must be at least 1' },
+                                                valueAsNumber: true,
+                                            }}
+                                            error={errors.dailySendLimitPerSender?.message}
+                                            min="1"
+                                        />
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            {senderLimitSummary.recommendedLimit
+                                                ? `Suggested max for selected sender(s): ${senderLimitSummary.recommendedLimit}/day. ${senderLimitSummary.note}`
+                                                : senderLimitSummary.note}
+                                        </p>
+                                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                            <span className="text-xs text-gray-400 flex items-center gap-0.5"><FiInfo size={11} /> Suggest:</span>
+                                            <button type="button" onClick={() => setValue('dailySendLimitPerSender', 500)}
+                                                className={`text-xs px-2 py-0.5 border rounded-full hover:bg-gray-50 ${senderLimitSummary.recommendedLimit === 500 ? 'border-amber-400 bg-amber-50 text-amber-700' : 'text-gray-600'}`}>
+                                                500 (Gmail app pwd)
+                                            </button>
+                                            <button type="button" onClick={() => setValue('dailySendLimitPerSender', 2000)}
+                                                className={`text-xs px-2 py-0.5 border rounded-full hover:bg-gray-50 ${senderLimitSummary.recommendedLimit === 2000 && !senderLimitSummary.hasMixedRecommendations ? 'border-amber-400 bg-amber-50 text-amber-700' : 'text-gray-600'}`}>
+                                                2000 (Workspace)
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Scheduling conflict warnings */}
+                                    {scheduleConflicts.length > 0 && (
+                                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
+                                            <p className="text-xs font-semibold text-amber-700 flex items-center gap-1">
+                                                <FiAlertTriangle size={13} /> Scheduling conflicts (next 14 days)
+                                            </p>
+                                            {scheduleConflicts.map((c, i) => (
+                                                <p key={i} className="text-xs text-amber-600 ml-4">{c}</p>
+                                            ))}
+                                            {scheduleConflicts.length === 5 && (
+                                                <p className="text-xs text-amber-500 ml-4">…and possibly more</p>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -318,14 +521,15 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                                         <Controller
                                             name="senderEmails"
                                             control={control}
-                                            rules={{ required: true }}
+                                            rules={{ validate: (value) => value?.length ? true : 'Select at least one sender email' }}
                                             render={({ field }) => (
                                                 <ToggleButtonGroup
                                                     key={editCampaign?.campaignId || 'new'}
                                                     label="Send From Emails"
-                                                    options={authEmails}
+                                                    options={authEmails.map((entry) => entry.email)}
                                                     value={field.value || []}
                                                     onChange={field.onChange}
+                                                    error={errors.senderEmails?.message as string | undefined}
                                                 />
                                             )}
                                         />
@@ -365,7 +569,14 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                                                 label="Recipient 'To' Address"
                                                 name="toEmail"
                                                 register={register}
-                                                required
+                                                rules={{
+                                                    validate: (value: string) => {
+                                                        if (sendMethod !== 'cc' && sendMethod !== 'bcc') return true;
+                                                        if (!value) return 'To email is required for CC/BCC';
+                                                        return isValidEmailAddress(value) || 'Enter a valid To email';
+                                                    },
+                                                }}
+                                                error={errors.toEmail?.message}
                                             />
                                         )}
                                     </div>
@@ -375,7 +586,11 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                                         name="replyToEmail"
                                         type="email"
                                         register={register}
-                                        required
+                                        required="Reply-To address is required"
+                                        rules={{
+                                            validate: (value: string) => isValidEmailAddress(value) || 'Enter a valid reply-to email',
+                                        }}
+                                        error={errors.replyToEmail?.message}
                                     />
                                     {/* Audience selector */}
                                     <div>
@@ -383,8 +598,8 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                                             Audience <span className="text-red-500">*</span>
                                         </label>
                                         <select
-                                            {...register('audienceId', { required: true })}
-                                            className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            {...register('audienceId', { required: 'Please select an audience' })}
+                                            className={`w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.audienceId ? 'border-red-400' : 'border-gray-300'}`}
                                         >
                                             <option value="">— Select audience —</option>
                                             {audiences.map(a => (
@@ -393,6 +608,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                                                 </option>
                                             ))}
                                         </select>
+                                        {errors.audienceId && <p className="text-xs text-red-500 mt-0.5">{errors.audienceId.message}</p>}
                                         {audiences.length === 0 && (
                                             <p className="text-xs text-gray-400 mt-1">
                                                 No audiences yet — go to the Audiences section and upload a sheet first.
@@ -436,6 +652,7 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                             )}
                         </div>
                     </div>
+
 
                     {/* Footer / Actions */}
                     <div className="p-6 bg-gray-50 border-t flex justify-between items-center">
@@ -500,10 +717,13 @@ export default function CampaignForm({ isOpen, onClose, onSubmit, onDelete, onTo
                             Are you sure you want to delete &quot;{editCampaign?.campaignName}&quot;? This cannot be undone.
                         </p>
                         <div className="flex justify-end space-x-3">
-                            <button type="button" onClick={() => setShowDeleteConfirm(false)} disabled={isDeleting} className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">
+                            <button type="button" onClick={() => setShowDeleteConfirm(false)} disabled={isDeleting}
+                                className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">
                                 Cancel
                             </button>
-                            <button type="button" onClick={handleDelete} disabled={isDeleting} className="px-4 py-2 text-sm text-white rounded-md flex items-center" style={{ backgroundColor: isDeleting ? '#9CA3AF' : '#DC2626' }}>
+                            <button type="button" onClick={handleDelete} disabled={isDeleting}
+                                className="px-4 py-2 text-sm text-white rounded-md flex items-center"
+                                style={{ backgroundColor: isDeleting ? '#9CA3AF' : '#DC2626' }}>
                                 {isDeleting && <FiLoader className="animate-spin mr-2 h-4 w-4" />}
                                 {isDeleting ? 'Deleting...' : 'Delete'}
                             </button>
@@ -521,10 +741,12 @@ interface FormInputProps {
     name: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     register: UseFormRegister<any>;
-    required?: boolean;
+    required?: boolean | string;
     type?: string;
     placeholder?: string;
     min?: string;
+    rules?: RegisterOptions;
+    error?: string;
     [key: string]: unknown;
 }
 
@@ -533,39 +755,49 @@ interface FormSelectProps {
     name: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     register: UseFormRegister<any>;
-    required?: boolean;
+    required?: boolean | string;
     options: { value: string; label: string }[];
+    rules?: RegisterOptions;
+    error?: string;
     [key: string]: unknown;
 }
 
-const FormInput = ({ label, name, register, required, type = "text", ...props }: FormInputProps) => (
+const FormInput = ({ label, name, register, required, type = "text", rules, error, ...props }: FormInputProps) => (
     <div>
         <label htmlFor={name} className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
         <input
             id={name}
             type={type}
-            {...register(name, { required })}
+            {...register(name, {
+                ...(required ? { required: typeof required === 'string' ? required : `${label} is required` } : {}),
+                ...(rules || {}),
+            })}
             {...props}
-            className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={`w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${error ? 'border-red-400' : 'border-gray-300'}`}
         />
+        {error && <p className="text-xs text-red-500 mt-0.5">{error}</p>}
     </div>
 );
 
-const FormSelect = ({ label, name, register, required, options, ...props }: FormSelectProps) => (
+const FormSelect = ({ label, name, register, required, options, rules, error, ...props }: FormSelectProps) => (
     <div>
         <label htmlFor={name} className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
         <select
             id={name}
-            {...register(name, { required })}
+            {...register(name, {
+                ...(required ? { required: typeof required === 'string' ? required : `${label} is required` } : {}),
+                ...(rules || {}),
+            })}
             {...props}
-            className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={`w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${error ? 'border-red-400' : 'border-gray-300'}`}
         >
             {options.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
         </select>
+        {error && <p className="text-xs text-red-500 mt-0.5">{error}</p>}
     </div>
 );
 
-const ToggleButtonGroup = ({ label, options, value, onChange }: { label: string; options: string[]; value: string[]; onChange: (newValue: string[]) => void; }) => {
+const ToggleButtonGroup = ({ label, options, value, onChange, error }: { label: string; options: string[]; value: string[]; onChange: (newValue: string[]) => void; error?: string; }) => {
     const { settings } = useTheme();
     const handleSelect = useCallback((option: string) => {
         const newValue = value.includes(option) ? value.filter(item => item !== option) : [...value, option];
@@ -592,6 +824,7 @@ const ToggleButtonGroup = ({ label, options, value, onChange }: { label: string;
                     </button>
                 )) : <p className="text-sm text-gray-500">No options available.</p>}
             </div>
+            {error && <p className="text-xs text-red-500 mt-0.5">{error}</p>}
         </div>
     );
 };

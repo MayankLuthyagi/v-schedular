@@ -35,6 +35,8 @@ import ViewIconButton from '@/components/ViewIconButton';
 import { useToast } from '@/hooks/useToast';
 import { FiMail, FiAlertCircle, FiX, FiBarChart, FiEye, FiRefreshCw, FiUsers, FiCalendar, FiTrash2, FiPlus, FiDownload, FiLogOut } from 'react-icons/fi';
 import TemplatePreviewModal from '@/components/TemplatePreviewModal';
+import { SenderDirectoryEntry, getDayName, inferSenderLimit } from '@/lib/scheduleLoad';
+import { getTemplateAudienceWarning } from '@/lib/templateVariables';
 // --- Data Fetching Hooks --------------------------------------------------
 
 /**
@@ -358,6 +360,26 @@ const useDateAutomations = (trigger: number) => {
     return { automations, loading };
 };
 
+const useSenderDirectory = () => {
+    const [senderDirectory, setSenderDirectory] = useState<Record<string, SenderDirectoryEntry>>({});
+    useEffect(() => {
+        fetch('/api/authEmails')
+            .then((response) => response.json())
+            .then((data) => {
+                if (!data.success) return;
+                const directory = Object.fromEntries(
+                    (data.emails || []).map((email: { email: string; main?: string | null }) => [
+                        email.email,
+                        { email: email.email, main: email.main || '' },
+                    ])
+                );
+                setSenderDirectory(directory);
+            })
+            .catch(() => setSenderDirectory({}));
+    }, []);
+    return senderDirectory;
+};
+
 // --- Main Dashboard Page Component ----------------------------------------
 
 export default function DashboardPage() {
@@ -407,6 +429,7 @@ export default function DashboardPage() {
     const { audiences, loading: audiencesLoading } = useAudiences(audiencesTrigger);
     const { broadcasts, loading: broadcastsLoading } = useBroadcasts(broadcastsTrigger);
     const { automations, loading: automationsLoading } = useDateAutomations(automationsTrigger);
+    const senderDirectory = useSenderDirectory();
 
     if (themeLoading) {
         return (
@@ -655,6 +678,17 @@ export default function DashboardPage() {
                                     {(emailTemplateAllowed || emailLogsAllowed || campaignAllowed || oneTimeBroadcastAllowed || dateBasedAutomationAllowed) && (
                                         <>
                                             <h1 className="text-2xl font-bold text-gray-900 mb-8">Dashboard Overview</h1>
+
+                                            {/* Upcoming Scheduling Warnings */}
+                                            <UpcomingScheduleWarnings
+                                                campaigns={campaigns}
+                                                broadcasts={broadcasts}
+                                                automations={automations}
+                                                senderDirectory={senderDirectory}
+                                                templates={templates}
+                                                audiences={audiences}
+                                            />
+
                                             {/* Create Section - Show all enabled features */}
                                             <div className="mb-8">
                                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1474,6 +1508,138 @@ const DeleteAllLogsModal = ({ onConfirm, onClose }: DeleteAllLogsModalProps) => 
     </div>
 );
 
+// --- Upcoming Schedule Warnings ---
+interface UpcomingWarningProps {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    campaigns: any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    broadcasts: any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    automations: any[];
+    senderDirectory: Record<string, SenderDirectoryEntry>;
+    templates: EmailTemplate[];
+    audiences: Audience[];
+}
+
+const UpcomingScheduleWarnings = ({ campaigns, broadcasts, automations, senderDirectory, templates, audiences }: UpcomingWarningProps) => {
+    const warnings = React.useMemo(() => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const result: { label: string; warnings: string[] }[] = [];
+        const templateById = Object.fromEntries(templates.map((template) => [template.templateId, template]));
+        const audienceById = Object.fromEntries(audiences.map((audience) => [audience.audienceId, audience]));
+
+        for (let i = 0; i < 7; i++) {
+            const cur = new Date(today);
+            cur.setDate(cur.getDate() + i);
+            const dateStr = cur.toISOString().split('T')[0];
+            const dayName = getDayName(dateStr);
+
+            // Aggregate per sender
+            const senderLoad: Record<string, { total: number; limit: number; sources: string[] }> = {};
+
+            const addLoad = (sender: string, planned: number, limit: number, src: string) => {
+                if (!senderLoad[sender]) senderLoad[sender] = { total: 0, limit, sources: [] };
+                senderLoad[sender].total += planned;
+                senderLoad[sender].limit = Math.min(senderLoad[sender].limit || limit, limit);
+                senderLoad[sender].sources.push(src);
+            };
+
+            broadcasts.forEach((b) => {
+                if (b.sendDate === dateStr && b.status !== 'sent') {
+                    (b.senderEmails || []).forEach((s: string) => addLoad(s, b.dailySendLimitPerSender || 0, b.dailySendLimitPerSender || 0, `broadcast "${b.name}"`));
+                }
+            });
+
+            campaigns.forEach((c) => {
+                if (c.isActive !== false && c.sendDays?.includes(dayName) &&
+                    dateStr >= c.startDate && dateStr <= c.endDate) {
+                    (c.senderEmails || []).forEach((s: string) => addLoad(s, c.dailySendLimitPerSender || 0, c.dailySendLimitPerSender || 0, `campaign "${c.campaignName}"`));
+                }
+            });
+
+            automations.forEach((a) => {
+                if (a.isActive !== false && a.scheduledDates?.some((d: { date: string }) => d.date === dateStr)) {
+                    (a.senderEmails || []).forEach((s: string) => addLoad(s, a.dailySendLimitPerSender || 0, a.dailySendLimitPerSender || 0, `automation "${a.name}"`));
+                }
+            });
+
+            const dayWarnings: string[] = [];
+            Object.entries(senderLoad).forEach(([sender, { total, sources }]) => {
+                const recommendedLimit = inferSenderLimit(senderDirectory[sender] || sender).recommendedLimit;
+                if (total > recommendedLimit) {
+                    dayWarnings.push(`${sender}: ${total}/${recommendedLimit} planned - ${sources.join(', ')}`);
+                }
+            });
+
+            if (dayWarnings.length > 0) {
+                result.push({ label: `${dateStr} (${getDayName(dateStr)})`, warnings: dayWarnings });
+            }
+        }
+
+        campaigns.forEach((campaign) => {
+            if (campaign.isActive === false) return;
+            const templateWarning = getTemplateAudienceWarning({
+                template: templateById[campaign.templateId],
+                audience: audienceById[campaign.audienceId],
+                sendMethod: campaign.sendMethod,
+            });
+            if (templateWarning) {
+                result.unshift({ label: `Campaign: ${campaign.campaignName}`, warnings: [templateWarning.message] });
+            }
+        });
+
+        broadcasts.forEach((broadcast) => {
+            if (broadcast.status === 'sent') return;
+            const templateWarning = getTemplateAudienceWarning({
+                template: templateById[broadcast.templateId],
+                audience: audienceById[broadcast.audienceId],
+                sendMethod: broadcast.sendMethod,
+            });
+            if (templateWarning) {
+                result.unshift({ label: `Broadcast: ${broadcast.name}`, warnings: [templateWarning.message] });
+            }
+        });
+
+        automations.forEach((automation) => {
+            if (automation.isActive === false) return;
+            const templateWarning = getTemplateAudienceWarning({
+                template: templateById[automation.templateId],
+                audience: audienceById[automation.audienceId],
+                sendMethod: automation.sendMethod,
+            });
+            if (templateWarning) {
+                result.unshift({ label: `Automation: ${automation.name}`, warnings: [templateWarning.message] });
+            }
+        });
+
+        return result;
+    }, [campaigns, broadcasts, automations, senderDirectory, templates, audiences]);
+
+    if (warnings.length === 0) return null;
+
+    return (
+        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+                <FiAlertCircle className="text-amber-600 w-4 h-4" />
+                <h3 className="text-sm font-semibold text-amber-800">Warnings</h3>
+            </div>
+            <div className="space-y-2">
+                {warnings.map(({ label, warnings: msgs }) => (
+                    <div key={label}>
+                        <p className="text-xs font-medium text-amber-700">{label}</p>
+                        {msgs.map((m, i) => (
+                            <p key={i} className="text-xs text-amber-600 ml-4 mt-0.5">• {m}</p>
+                        ))}
+                    </div>
+                ))}
+            </div>
+            <p className="text-xs text-amber-500 mt-2">Includes template-personalization issues and upcoming sender daily-cap overloads.</p>
+        </div>
+    );
+};
+
+
 // Quick Create Card helper
 const QuickCreateCard = ({ icon, title, desc, btnLabel, themeColor, onClick }: { icon: React.ReactNode; title: string; desc: string; btnLabel: string; themeColor: string; onClick: () => void }) => (
     <div
@@ -1492,3 +1658,6 @@ const QuickCreateCard = ({ icon, title, desc, btnLabel, themeColor, onClick }: {
         </div>
     </div>
 );
+
+
+

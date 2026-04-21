@@ -1,25 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
+import { validateCampaignPayload } from '@/lib/scheduleValidation';
 
 export async function POST(request: NextRequest) {
     try {
         const formData = await request.formData();
+        let senderEmails: string[] = [];
+        let sendDays: string[] = [];
+        try {
+            senderEmails = JSON.parse(formData.get('senderEmails') as string || '[]');
+            sendDays = JSON.parse(formData.get('sendDays') as string || '[]');
+        } catch {
+            return NextResponse.json({ error: 'Invalid sender or schedule day selection' }, { status: 400 });
+        }
 
-        const campaignData: Record<string, unknown> = {
-            campaignId: uuidv4(),
-            campaignName: formData.get('campaignName') as string,
+        const payload = {
+            name: formData.get('campaignName') as string,
             templateId: formData.get('templateId') as string,
-            audienceId: formData.get('audienceId') as string || undefined,
-            senderEmails: JSON.parse(formData.get('senderEmails') as string || '[]'),
+            audienceId: formData.get('audienceId') as string || '',
+            senderEmails,
             startDate: formData.get('startDate') as string,
             endDate: formData.get('endDate') as string,
             sendTime: formData.get('sendTime') as string,
-            sendDays: JSON.parse(formData.get('sendDays') as string || '[]'),
+            sendDays,
             dailySendLimitPerSender: parseInt(formData.get('dailySendLimitPerSender') as string),
             toEmail: formData.get('toEmail') as string || '',
             replyToEmail: formData.get('replyToEmail') as string || '',
             sendMethod: formData.get('sendMethod') as string,
+        };
+        const validationError = validateCampaignPayload(payload);
+        if (validationError) {
+            return NextResponse.json({ error: validationError }, { status: 400 });
+        }
+
+        const campaignData: Record<string, unknown> = {
+            campaignId: uuidv4(),
+            campaignName: payload.name,
+            templateId: payload.templateId,
+            audienceId: payload.audienceId || undefined,
+            senderEmails,
+            startDate: payload.startDate,
+            endDate: payload.endDate,
+            sendTime: payload.sendTime,
+            sendDays,
+            dailySendLimitPerSender: payload.dailySendLimitPerSender,
+            toEmail: payload.toEmail,
+            replyToEmail: payload.replyToEmail,
+            sendMethod: payload.sendMethod,
             isActive: formData.get('isActive') === 'true',
             randomSend: formData.get('randomSend') === 'true',
             todaySent: null,
@@ -81,20 +109,47 @@ export async function PUT(request: NextRequest) {
         if (!campaignId) {
             return NextResponse.json({ error: 'Campaign ID is required' }, { status: 400 });
         }
+        let senderEmails: string[] = [];
+        let sendDays: string[] = [];
+        try {
+            senderEmails = JSON.parse(formData.get('senderEmails') as string || '[]');
+            sendDays = JSON.parse(formData.get('sendDays') as string || '[]');
+        } catch {
+            return NextResponse.json({ error: 'Invalid sender or schedule day selection' }, { status: 400 });
+        }
 
-        const updateData: Record<string, unknown> = {
-            campaignName: formData.get('campaignName') as string,
+        const payload = {
+            name: formData.get('campaignName') as string,
             templateId: formData.get('templateId') as string,
-            audienceId: formData.get('audienceId') as string || undefined,
-            senderEmails: JSON.parse(formData.get('senderEmails') as string || '[]'),
+            audienceId: formData.get('audienceId') as string || '',
+            senderEmails,
             startDate: formData.get('startDate') as string,
             endDate: formData.get('endDate') as string,
             sendTime: formData.get('sendTime') as string,
-            sendDays: JSON.parse(formData.get('sendDays') as string || '[]'),
+            sendDays,
             dailySendLimitPerSender: parseInt(formData.get('dailySendLimitPerSender') as string),
             toEmail: formData.get('toEmail') as string || '',
             replyToEmail: formData.get('replyToEmail') as string || '',
             sendMethod: formData.get('sendMethod') as string,
+        };
+        const validationError = validateCampaignPayload(payload);
+        if (validationError) {
+            return NextResponse.json({ error: validationError }, { status: 400 });
+        }
+
+        const updateData: Record<string, unknown> = {
+            campaignName: payload.name,
+            templateId: payload.templateId,
+            audienceId: payload.audienceId || undefined,
+            senderEmails,
+            startDate: payload.startDate,
+            endDate: payload.endDate,
+            sendTime: payload.sendTime,
+            sendDays,
+            dailySendLimitPerSender: payload.dailySendLimitPerSender,
+            toEmail: payload.toEmail,
+            replyToEmail: payload.replyToEmail,
+            sendMethod: payload.sendMethod,
             isActive: formData.get('isActive') === 'true',
             randomSend: formData.get('randomSend') === 'true',
             updatedAt: new Date(),
